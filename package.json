@@ -1,0 +1,39 @@
+{
+  "name": "envelope-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "start:lan": "expo start --lan -c",
+    "start:tunnel": "expo start --tunnel -c",
+    "start:auto": "powershell -Command \"$env:REACT_NATIVE_PACKAGER_HOSTNAME = (Get-NetIPAddress | Where-Object {$_.InterfaceAlias -match 'Wi-Fi' -and $_.AddressFamily -eq 'IPv4'} | Select-Object -ExpandProperty IPAddress); npx expo start --lan -c\"",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "clean": "node -e \"try{require('fs').rmSync('node_modules',{recursive:true,force:true});require('fs').rmSync('.expo',{recursive:true,force:true});require('fs').rmSync('.cache',{recursive:true,force:true});require('fs').rmSync('package-lock.json',{force:true});}catch(e){}\""
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "^2.2.0",
+    "expo": "^54.0.12",
+    "expo-auth-session": "^7.0.8",
+    "expo-keep-awake": "~15.0.7",
+    "expo-linking": "~8.0.8",
+    "expo-router": "~6.0.10",
+    "expo-splash-screen": "~31.0.10",
+    "expo-status-bar": "~3.0.8",
+    "expo-web-browser": "~15.0.8",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-native": "0.81.4",
+    "react-native-safe-area-context": "~5.6.0",
+    "react-native-screens": "~4.16.0",
+    "react-native-web": "^0.21.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.24.0",
+    "@types/react": "~19.1.10",
+    "@types/react-native": "^0.72.8",
+    "typescript": "~5.9.2"
+  }
+}
