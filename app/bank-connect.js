@@ -1,82 +1,78 @@
 // app/bank-connect.js
-import React, { useState, useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from "react-native";
-import * as WebBrowser from "expo-web-browser";
 import * as Linking from "expo-linking";
-import { useBudget } from "../context/BudgetContext";
 
-// If you have EXPO_PUBLIC_BANK_BACKEND_URL, it will use that; otherwise fallback to your LAN.
-const BACKEND_URL = process.env.EXPO_PUBLIC_BANK_BACKEND_URL ?? "http://192.168.0.170:4000";
+// Use env if present; otherwise fall back to your LAN IP backend
+const BACKEND_URL =
+  process.env.EXPO_PUBLIC_BANK_BACKEND_URL ?? "http://192.168.0.170:4000";
 
 export default function BankConnectScreen() {
   const [busy, setBusy] = useState(false);
-  const { importBankTransactions } = useBudget();
 
-  // Expo deep link that the backend used when building the hosted link
+  // Just for display so you can see what Redirect URI Expo is using
   const redirectUri = useMemo(() => Linking.createURL("/bank/callback"), []);
 
+  // --- Utilities -------------------------------------------------------------
+  const showErr = (prefix, err, extra = "") => {
+    const msg = typeof err === "string" ? err : (err?.message || String(err));
+    Alert.alert(prefix, `${msg}${extra ? `\n${extra}` : ""}`);
+  };
+
+  // --- Ping backend (diagnostic) --------------------------------------------
+  const onPing = async () => {
+    try {
+      const url = `${BACKEND_URL}/diag`;
+      const res = await fetch(url);
+      const json = await res.json();
+      Alert.alert("Ping OK", JSON.stringify(json));
+    } catch (e) {
+      showErr("Ping failed", e, `\nBACKEND_URL=${BACKEND_URL}`);
+    }
+  };
+
+  // --- Connect (Fiskil) ------------------------------------------------------
+  // For now this just confirms backend can start the flow (or is in fallback).
   const onConnectPress = async () => {
     try {
       setBusy(true);
-      const resp = await fetch(`${BACKEND_URL}/basiq/connect/start`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          clientTag: "demo-user",
-          email: "demo@example.com",
-          redirectUri,
-        }),
-      });
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data?.error || "Request failed");
+      const url = `${BACKEND_URL}/fiskil/connect/start`;
+      const res = await fetch(url, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(`${res.status} ${url} -> ${JSON.stringify(data)}`);
 
-      if (!data.connectUrl) {
-        Alert.alert("Connected", "Fallback mode: user linked. Tap “Import Latest” to pull transactions.");
-        return;
-      }
-
-      const res = await WebBrowser.openAuthSessionAsync(data.connectUrl, redirectUri);
-      if (res.type === "success" || res.type === "dismiss") {
-        Alert.alert("Connect", "If you completed the flow, tap “Import Latest”.");
-      }
-    } catch (err) {
-      Alert.alert("Connect Error", String(err));
+      // If your backend returns a hosted-link url later, open it in web browser.
+      // For now we just notify.
+      Alert.alert(
+        "Connect",
+        data?.connectUrl
+          ? "Hosted link created; when live we’ll open it automatically."
+          : "Sandbox/fallback mode: your end user is set. Tap “Import Latest”."
+      );
+    } catch (e) {
+      showErr("Connect Error", e, `\nBACKEND_URL=${BACKEND_URL}`);
     } finally {
       setBusy(false);
     }
   };
 
-  const onImportLatest = async () => {
+  // --- Import latest transactions -------------------------------------------
+  const onImportPress = async () => {
     try {
       setBusy(true);
-      const resp = await fetch(`${BACKEND_URL}/basiq/transactions`, {
+      const url = `${BACKEND_URL}/fiskil/transactions`;
+      const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clientTag: "demo-user", limit: 100 }),
+        body: JSON.stringify({ limit: 50 }), // adjust as you like
       });
-      const json = await resp.json();
-      if (!resp.ok) throw new Error(json?.error || "Import failed");
+      const data = await res.json();
+      if (!res.ok) throw new Error(`${res.status} ${url} -> ${JSON.stringify(data)}`);
 
-      // Keep only recent ones (e.g., last 7 days) to avoid historical back-fill affecting the UI
-      const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-      const cleaned = (json.txs || [])
-        .map((t) => ({
-          id: String(t.id),
-          amount: Number(t.amount) || 0,
-          description: t.description || "Unknown",
-          postedAt: t.postedAt || null,
-        }))
-        .filter((t) => {
-          const ts = t.postedAt ? Date.parse(t.postedAt) : Date.now();
-          return ts >= sevenDaysAgo;
-        });
-
-      // ✅ Push into context so they show in the Transactions screen
-      importBankTransactions(cleaned);
-
-      Alert.alert("Import", `Imported ${cleaned.length} transaction(s). Check Transactions.`);
+      const n = Array.isArray(data?.txs) ? data.txs.length : 0;
+      Alert.alert("Import", `Imported ${n} transaction(s). Check Transactions.`);
     } catch (e) {
-      Alert.alert("Import Error", String(e.message || e));
+      showErr("Import Error", e, `\nBACKEND_URL=${BACKEND_URL}`);
     } finally {
       setBusy(false);
     }
@@ -84,15 +80,31 @@ export default function BankConnectScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Bank Connect (Basiq)</Text>
+      <Text style={styles.title}>Bank Connect (Fiskil)</Text>
       <Text style={styles.subtitle}>Redirect URI: {redirectUri}</Text>
 
-      <TouchableOpacity style={[styles.btn, busy && styles.btnDisabled]} onPress={onConnectPress} disabled={busy}>
+      <TouchableOpacity
+        style={[styles.btn, busy && styles.btnDisabled]}
+        onPress={onConnectPress}
+        disabled={busy}
+      >
         {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Connect Bank</Text>}
       </TouchableOpacity>
 
-      <TouchableOpacity style={[styles.btnSecondary, busy && styles.btnDisabled]} onPress={onImportLatest} disabled={busy}>
+      <TouchableOpacity
+        style={[styles.btnSecondary, busy && styles.btnDisabled]}
+        onPress={onImportPress}
+        disabled={busy}
+      >
         {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Import Latest</Text>}
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={[styles.btnGhost, busy && styles.btnDisabled]}
+        onPress={onPing}
+        disabled={busy}
+      >
+        <Text style={styles.btnGhostText}>Ping Backend</Text>
       </TouchableOpacity>
     </View>
   );
@@ -101,7 +113,7 @@ export default function BankConnectScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#0E0F13", padding: 16 },
   title: { color: "#fff", fontSize: 20, fontWeight: "800", textAlign: "center", marginBottom: 6 },
-  subtitle: { color: "#9BA3B4", textAlign: "center", marginBottom: 20 },
+  subtitle: { color: "#9BA3B4", textAlign: "center", marginBottom: 18 },
   btn: {
     backgroundColor: "#1e3a8a",
     borderRadius: 12,
@@ -116,7 +128,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 1,
     borderColor: "#1f2937",
+    marginBottom: 10,
+  },
+  btnGhost: {
+    paddingVertical: 12,
+    alignItems: "center",
   },
   btnText: { color: "#fff", fontWeight: "800", fontSize: 16 },
+  btnGhostText: { color: "#9BA3B4", fontWeight: "700" },
   btnDisabled: { opacity: 0.6 },
 });

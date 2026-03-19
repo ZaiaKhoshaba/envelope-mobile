@@ -85,28 +85,37 @@ function reducer(state, action) {
       };
     }
 
-    /* -------- Import (read-only history) -------- */
-    case IMPORT_BANK_TXS: {
-      const incoming = Array.isArray(action.payload) ? action.payload : [];
-      const existingIds = new Set(state.transactions.map((t) => t.id));
+case IMPORT_BANK_TXS: {
+  // payload: array of { id, amount (signed), description, postedAt }
+  const incoming = Array.isArray(action.payload) ? action.payload : [];
+  if (incoming.length === 0) return state;
 
-      const mapped = incoming
-        .filter((t) => t && t.id && !existingIds.has(String(t.id)))
-        .map((t) => ({
-          id: String(t.id),
-          kind: "spend",
-          amount: Number(t.amount) || 0,
-          merchant: t.description || "Unknown",
-          ts: t.postedAt ? Date.parse(t.postedAt) || Date.now() : Date.now(),
-          imported: true,
-          allocated: true, // history shouldn't prompt allocation
-          allocations: [],
-          source: "bank",
-        }));
+  const seen = new Set(state.transactions.map((t) => String(t.id)));
 
-      if (mapped.length === 0) return state;
-      return { ...state, transactions: [...mapped, ...state.transactions] };
-    }
+  const mapped = incoming
+    .filter((t) => t && t.id && !seen.has(String(t.id)))
+    .map((t) => {
+      const signed = Number(t.amount) || 0;
+      const isIncome = signed > 0;
+      return {
+        id: String(t.id),
+        kind: isIncome ? "income" : "spend",
+        amount: Math.abs(signed), // store absolute for display; sign comes from kind
+        merchant: t.description || "Unknown",
+        ts: t.postedAt ? Date.parse(t.postedAt) || Date.now() : Date.now(),
+        imported: true,
+        allocated: isIncome ? true : false,   // income is “done”; spends may be unallocated later
+        allocations: [],
+        source: "bank",
+      };
+    });
+
+  if (mapped.length === 0) return state;
+
+  // Prepend so newest imports show first
+  return { ...state, transactions: [...mapped, ...state.transactions] };
+}
+
 
     /* -------- Envelopes CRUD -------- */
     case ADD_ENVELOPE: {
