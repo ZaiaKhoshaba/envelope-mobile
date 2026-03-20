@@ -1,106 +1,133 @@
 // app/transactions.js
-import React, { useMemo, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal } from "react-native";
+import React, { useMemo, useState, useCallback } from "react";
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal, FlatList } from "react-native";
 import { useBudget } from "../context/BudgetContext";
 
 export default function TransactionsScreen() {
   const { state, allocateOutstanding, unallocated } = useBudget();
   const [chooserForTx, setChooserForTx] = useState(null);
 
-  const txs = useMemo(() => state.transactions, [state.transactions]);
+  const txs = useMemo(
+  () =>
+    Array.isArray(state.transactions)
+      ? [...state.transactions].sort((a, b) => {
+          const aTime = new Date(a.postedAt || a.createdAt || 0).getTime();
+          const bTime = new Date(b.postedAt || b.createdAt || 0).getTime();
+          return bTime - aTime; // latest first
+        })
+      : [],
+  [state.transactions]
+);
 
-  const openChooser = (tx) => setChooserForTx(tx);
-  const closeChooser = () => setChooserForTx(null);
 
-  const pickSource = (sourceId) => {
+  const openChooser = useCallback((tx) => setChooserForTx(tx), []);
+  const closeChooser = useCallback(() => setChooserForTx(null), []);
+
+  const pickSource = useCallback((sourceId) => {
     if (!chooserForTx) return;
     allocateOutstanding(chooserForTx.id, sourceId);
     closeChooser();
-  };
+  }, [chooserForTx, allocateOutstanding, closeChooser]);
 
   const envelopesSorted = useMemo(
     () => [...state.envelopes].sort((a, b) => b.amount - a.amount),
     [state.envelopes]
   );
 
+  /** ------- helpers for row rendering ------- */
+  const getPresentation = (t) => {
+    const isIncome = t.kind === "income";
+    const isSpend = t.kind === "spend";
+
+    let displaySign = "-";
+    if (isIncome) displaySign = "+";
+    else if (!isSpend) displaySign = (Number(t.amount) || 0) >= 0 ? "+" : "-";
+
+    const amountAbs = Math.abs(Number(t.amount) || 0).toFixed(2);
+    const amountText = `${displaySign}$${amountAbs}`;
+    const amountStyle = displaySign === "+" ? styles.pos : styles.neg;
+
+    const already = (t.allocations || []).reduce((s, a) => s + (a.used || 0), 0);
+    const remaining = Math.max(0, Number(((Math.abs(t.amount) || 0) - already).toFixed(2)));
+    const isAllocated = !!t.allocated;
+
+    const title =
+      t.merchant ||
+      t.description ||
+      (t.kind === "income" ? "Income" : t.meta?.reason || "Transaction");
+
+    return { isIncome, isSpend, amountText, amountStyle, remaining, isAllocated, title };
+  };
+
+  /** ------- FlatList bits ------- */
+  const keyExtractor = useCallback((t, idx) => {
+    // Prefer backend id; otherwise a stable composite + idx (idx ensures uniqueness even if duped)
+    const k =
+      t?.id ??
+      `${t?.postedAt ?? t?.createdAt ?? ""}|${t?.description ?? ""}|${t?.amount ?? ""}`;
+    return String(k) + `#${idx}`;
+  }, []);
+
+  const renderItem = useCallback(({ item: t, index }) => {
+    const { isIncome, isSpend, amountText, amountStyle, remaining, isAllocated, title } = getPresentation(t);
+
+    return (
+      <View style={styles.card}>
+        <View style={styles.rowTop}>
+          <Text style={styles.merchant}>{title}</Text>
+          <View style={styles.amountBox}>
+            <Text style={[styles.amount, amountStyle]}>{amountText}</Text>
+          </View>
+        </View>
+
+        <View style={styles.rowMid}>
+          <StatusPill imported={!!t.imported} isIncome={isIncome} isSpend={isSpend} allocated={isAllocated} />
+          {isSpend && !t.imported && !isAllocated && remaining > 0 && (
+            <Text style={styles.remaining}>Remaining: ${remaining.toFixed(2)}</Text>
+          )}
+        </View>
+
+        {t.allocations && t.allocations.length > 0 && (
+          <View style={styles.allocsBox}>
+            {t.allocations.map((a, idx2) => {
+              const label =
+                a.sourceId === "unallocated"
+                  ? "Unallocated"
+                  : state.envelopes.find((e) => e.id === a.sourceId)?.name || "Envelope";
+              return (
+                <Text style={styles.allocLine} key={`${t.id ?? "tx"}_a_${String(a.sourceId)}_${idx2}`}>
+                  • {label}: ${Number(a.used).toFixed(2)}
+                </Text>
+              );
+            })}
+          </View>
+        )}
+
+        {isSpend && !t.imported && !isAllocated && (
+          <View style={styles.actions}>
+            <TouchableOpacity style={styles.allocateBtn} onPress={() => openChooser(t)}>
+              <Text style={styles.allocateBtnText}>Allocate</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+    );
+  }, [openChooser, state.envelopes]);
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Transactions</Text>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-        {txs.length === 0 && <Text style={styles.empty}>No transactions yet.</Text>}
-
-        {txs.map((t) => {
-          // Derive presentation strictly from kind first, then sign as fallback
-          const isIncome = t.kind === "income";
-          const isSpend = t.kind === "spend";
-
-          // Choose sign/color
-          let displaySign = "-";
-          if (isIncome) displaySign = "+";
-          else if (!isSpend) {
-            // fallback for any other kinds: use real sign of amount
-            displaySign = (Number(t.amount) || 0) >= 0 ? "+" : "-";
-          }
-
-          const amountAbs = Math.abs(Number(t.amount) || 0).toFixed(2);
-          const amountText = `${displaySign}$${amountAbs}`;
-          const amountStyle = displaySign === "+" ? styles.pos : styles.neg;
-
-          // Remaining amount for spends
-          const already = (t.allocations || []).reduce((s, a) => s + (a.used || 0), 0);
-          const remaining = Math.max(0, Number(((Math.abs(t.amount) || 0) - already).toFixed(2)));
-          const isAllocated = !!t.allocated;
-
-          const title =
-            t.merchant ||
-            t.description ||
-            (t.kind === "income" ? "Income" : t.meta?.reason || "Transaction");
-
-          return (
-            <View key={t.id} style={styles.card}>
-              <View style={styles.rowTop}>
-                <Text style={styles.merchant}>{title}</Text>
-                <View style={styles.amountBox}>
-                  <Text style={[styles.amount, amountStyle]}>{amountText}</Text>
-                </View>
-              </View>
-
-              <View style={styles.rowMid}>
-                <StatusPill imported={!!t.imported} isIncome={isIncome} isSpend={isSpend} allocated={isAllocated} />
-                {isSpend && !t.imported && !isAllocated && remaining > 0 && (
-                  <Text style={styles.remaining}>Remaining: ${remaining.toFixed(2)}</Text>
-                )}
-              </View>
-
-              {t.allocations && t.allocations.length > 0 && (
-                <View style={styles.allocsBox}>
-                  {t.allocations.map((a, idx) => {
-                    const label =
-                      a.sourceId === "unallocated"
-                        ? "Unallocated"
-                        : state.envelopes.find((e) => e.id === a.sourceId)?.name || "Envelope";
-                    return (
-                      <Text style={styles.allocLine} key={t.id + "_a_" + idx}>
-                        • {label}: ${Number(a.used).toFixed(2)}
-                      </Text>
-                    );
-                  })}
-                </View>
-              )}
-
-              {/* Allocate only for non-imported spends that aren't covered */}
-              {isSpend && !t.imported && !isAllocated && (
-                <View style={styles.actions}>
-                  <TouchableOpacity style={styles.allocateBtn} onPress={() => openChooser(t)}>
-                    <Text style={styles.allocateBtnText}>Allocate</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-            </View>
-          );
-        })}
-      </ScrollView>
+      <FlatList
+        data={txs}
+        keyExtractor={keyExtractor}
+        renderItem={renderItem}
+        ListEmptyComponent={<Text style={styles.empty}>No transactions yet.</Text>}
+        contentContainerStyle={{ paddingBottom: 40 }}
+        initialNumToRender={20}
+        windowSize={10}
+        removeClippedSubviews
+      />
 
       {/* Source chooser for outstanding spends */}
       <Modal visible={!!chooserForTx} transparent animationType="fade">
@@ -170,7 +197,6 @@ function StatusPill({ imported, isIncome, isSpend, allocated }) {
       </View>
     );
   }
-  // default fallback
   return (
     <View style={[styles.pill, styles.pillImported]}>
       <Text style={styles.pillImportedText}>Imported</Text>
@@ -196,8 +222,8 @@ const styles = StyleSheet.create({
   merchant: { flex: 1, color: "#fff", fontWeight: "700", fontSize: 16, flexWrap: "wrap" },
   amountBox: { minWidth: 110, alignItems: "flex-end" },
   amount: { fontWeight: "800", fontSize: 16, textAlign: "right" },
-  pos: { color: "#22c55e" }, // green for income / credits
-  neg: { color: "#fb7b7b" }, // red/orange for spends / debits
+  pos: { color: "#22c55e" },
+  neg: { color: "#fb7b7b" },
 
   rowMid: { flexDirection: "row", alignItems: "center", marginTop: 8, gap: 10 },
   remaining: { color: "#9BA3B4", fontSize: 12 },

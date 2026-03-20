@@ -1,4 +1,5 @@
 // app/_layout.js
+import { AuthProvider } from "../context/AuthContext";
 import React from "react";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
@@ -98,17 +99,21 @@ function SpendChooserModal() {
 // --- Root layout wrapped with provider ---
 export default function Layout() {
   return (
-    <BudgetProvider>
-      <StatusBar style="light" />
-      <Stack
-        screenOptions={{
-          headerStyle: { backgroundColor: "#0E0F13" },
-          headerTintColor: "#fff",
-        }}
-      />
-      {/* Modal lives here so it can appear on top of all screens */}
-      <SpendChooserModal />
-    </BudgetProvider>
+    <AuthProvider>
+      <BudgetProvider>
+        <StatusBar style="light" />
+
+        <Stack
+          screenOptions={{
+            headerStyle: { backgroundColor: "#0E0F13" },
+            headerTintColor: "#fff",
+          }}
+        />
+
+        {/* Modal lives here so it can appear on top of all screens */}
+        <SpendChooserModal />
+      </BudgetProvider>
+    </AuthProvider>
   );
 }
 

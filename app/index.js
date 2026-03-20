@@ -1,5 +1,5 @@
 // app/index.js
-import React from "react";
+import React, { useEffect } from "react";
 import {
   View,
   Text,
@@ -10,16 +10,44 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useBudget } from "../context/BudgetContext";
+import { useAuth } from "../context/AuthContext";
 
 export default function Home() {
   const router = useRouter();
-  const { total, allocated, unallocated, simulateRandomSpend } = useBudget();
+  const { total, allocated, unallocated, simulateRandomSpend, resetAll } =
+  useBudget();
 
-  const onMockSpend = () => {
-    const result = simulateRandomSpend();
-    if (result.ok) {
-      Alert.alert("Mock Spend", result.message);
+  const { isAuthenticated, loading, logout } = useAuth();
+
+  // ---------------------------------------------
+  // LOGIN GUARD — redirect if not authenticated
+  // ---------------------------------------------
+  useEffect(() => {
+    if (!loading && !isAuthenticated) {
+      router.replace("/login");
     }
+  }, [loading, isAuthenticated, router]);
+
+  // While checking authentication, don't render the screen
+  if (loading || !isAuthenticated) {
+    return null;
+  }
+
+  // ---------------------------------------------
+  // Normal Home UI
+  // ---------------------------------------------
+  const onMockSpend = () => {
+  const result = simulateRandomSpend();
+  if (result.ok) {
+    // Go to transactions so you can allocate the spend straight away
+    router.push("/transactions");
+  }
+};
+
+
+  const onLogout = () => {
+    logout();
+    router.replace("/login");
   };
 
   return (
@@ -55,6 +83,13 @@ export default function Home() {
         </TouchableOpacity>
 
         <TouchableOpacity
+         style={styles.blueButton}
+         onPress={() => router.push("/income-schedule")}
+        >
+         <Text style={styles.buttonText}>Income Schedule</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity
           style={styles.blueButton}
           onPress={() => router.push("/new-envelope")}
         >
@@ -82,25 +117,39 @@ export default function Home() {
           <Text style={styles.buttonText}>Transactions</Text>
         </TouchableOpacity>
 
-
         <TouchableOpacity
           style={styles.blueButton}
           onPress={() => router.push("/cycle")}
         >
           <Text style={styles.buttonText}>Cycle</Text>
         </TouchableOpacity>
-        
 
-        {/* DEV-only Mock Spend */}
-        {__DEV__ && (
+        {true && (
           <TouchableOpacity
             style={[styles.blueButton, { backgroundColor: "#4FD1C5" }]}
             onPress={onMockSpend}
           >
             <Text style={styles.buttonText}>Mock Spend</Text>
           </TouchableOpacity>
-          
         )}
+
+        {true && (
+         <TouchableOpacity
+            style={[styles.blueButton, { backgroundColor: "#6B7280" }]}
+            onPress={resetAll}
+          >
+             <Text style={styles.buttonText}>Reset Demo Data</Text>
+           </TouchableOpacity>
+        )}
+
+
+        {/* Logout Button */}
+        <TouchableOpacity
+          style={[styles.blueButton, { backgroundColor: "#EF4444" }]}
+          onPress={onLogout}
+        >
+          <Text style={styles.buttonText}>Log Out</Text>
+        </TouchableOpacity>
       </View>
     </ScrollView>
   );
@@ -128,7 +177,6 @@ const styles = StyleSheet.create({
   label: { color: "#9BA3B4", fontSize: 12, marginBottom: 6 },
   value: { color: "#FFFFFF", fontSize: 18, fontWeight: "800" },
   valueAccent: { color: "#4FD1C5", fontSize: 18, fontWeight: "800" },
-
   actionsCol: { marginTop: 20, gap: 10 },
   blueButton: {
     backgroundColor: "#2563EB",

@@ -1,10 +1,20 @@
 // app/envelopes.js
 import React, { useMemo, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Modal, Alert } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  TextInput,
+  Modal,
+  Alert,
+} from "react-native";
 import { useBudget } from "../context/BudgetContext";
 
 export default function EnvelopesScreen() {
-  const { state, allocateToEnvelope, editEnvelope, deleteEnvelope } = useBudget();
+  const { state, allocateToEnvelope, editEnvelope, deleteEnvelope, unallocated } =
+    useBudget();
 
   const [editingId, setEditingId] = useState(null);
   const [editTarget, setEditTarget] = useState("");
@@ -12,38 +22,49 @@ export default function EnvelopesScreen() {
   const [editDate, setEditDate] = useState(""); // YYYY-MM-DD
   const [editName, setEditName] = useState("");
 
-  const envelopes = state.envelopes;
+  const envelopes = useMemo(() => state.envelopes || [], [state.envelopes]);
 
   const onOpenEdit = (env) => {
     setEditingId(env.id);
-    setEditTarget(env.target ? String(env.target) : "");
-    setEditFreq(env.freq || "monthly");
-    setEditDate(env.targetDate ? env.targetDate.slice(0, 10) : "");
     setEditName(env.name || "");
+    setEditTarget(
+      env.target != null && !Number.isNaN(Number(env.target))
+        ? String(env.target)
+        : ""
+    );
+    setEditFreq(env.targetFrequency || "monthly");
+    const d = env.targetDate ? String(env.targetDate) : "";
+    setEditDate(d ? d.slice(0, 10) : "");
   };
+
   const onCloseEdit = () => {
     setEditingId(null);
+    setEditName("");
     setEditTarget("");
     setEditFreq("monthly");
     setEditDate("");
-    setEditName("");
   };
 
   const onSaveEdit = () => {
+    if (!editingId) return;
+
     const updates = {};
     if (editName.trim()) updates.name = editName.trim();
     updates.target = Number(editTarget) || 0;
-    updates.freq = editFreq;
+    updates.targetFrequency = editFreq;
 
     if (editDate.trim()) {
       const d = new Date(editDate.trim());
       if (Number.isNaN(d.getTime())) {
-        Alert.alert("Target Date", "Please enter a valid date in YYYY-MM-DD format.");
+        Alert.alert(
+          "Target Date",
+          "Please enter a valid date in YYYY-MM-DD format."
+        );
         return;
       }
       updates.targetDate = d.toISOString();
     } else {
-      updates.targetDate = null;
+      updates.targetDate = "";
     }
 
     editEnvelope(editingId, updates);
@@ -54,64 +75,105 @@ export default function EnvelopesScreen() {
     <View style={styles.container}>
       <Text style={styles.title}>Envelopes</Text>
 
+      {/* Show global Unallocated once at top, not per envelope */}
+      <Text style={styles.unallocTop}>
+        Unallocated: ${Number(unallocated || 0).toFixed(2)}
+      </Text>
+
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-        {envelopes.length === 0 && <Text style={styles.empty}>No envelopes yet.</Text>}
+        {envelopes.length === 0 && (
+          <Text style={styles.empty}>No envelopes yet.</Text>
+        )}
 
-        {envelopes.map((e) => (
-          <View key={e.id} style={styles.card}>
-            <View style={styles.topRow}>
-              <Text style={styles.name}>{e.name}</Text>
-              <Text style={styles.balance}>${e.amount.toFixed(2)}</Text>
-            </View>
+        {envelopes.map((e) => {
+          const target = Number(e.target || 0);
+          const showProgress = target > 0;
+          const pct = progressPct(Number(e.amount || 0), target);
 
-            {/* Frequency + Days Left */}
-            <View style={styles.metaRow}>
-              <Text style={styles.meta}>
-                {e.type}/{e.rollover ? "rollover" : "no-rollover"} • {e.freq || "monthly"}
-              </Text>
-              {e.targetDate && (
-                <Text style={styles.daysLeftText}>{daysLeftText(e.targetDate)}</Text>
-              )}
-            </View>
-
-            {/* Progress bar (only if target > 0) */}
-            {e.target > 0 && (
-              <View style={styles.progressBox}>
-                <View style={styles.progressTrack}>
-                  <View style={[styles.progressFill, { width: progressPct(e.amount, e.target) + "%" }]} />
-                </View>
-                <Text style={styles.progressLabel}>
-                  ${e.amount.toFixed(2)} / ${e.target.toFixed(2)} {e.targetDate ? `• due ${fmtDate(e.targetDate)}` : ""}
+          return (
+            <View key={e.id} style={styles.card}>
+              <View style={styles.topRow}>
+                <Text style={styles.name}>{e.name}</Text>
+                <Text style={styles.balance}>
+                  ${Number(e.amount || 0).toFixed(2)}
                 </Text>
               </View>
-            )}
 
-            {/* Actions */}
-            <View style={styles.actions}>
-              <TouchableOpacity style={styles.btn} onPress={() => onOpenEdit(e)}>
-                <Text style={styles.btnText}>Edit</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.btn, styles.btnDanger]}
-                onPress={() =>
-                  Alert.alert("Delete Envelope", `Delete "${e.name}"? Remaining funds will return to Unallocated.`, [
-                    { text: "Cancel", style: "cancel" },
-                    { text: "Delete", style: "destructive", onPress: () => deleteEnvelope(e.id) },
-                  ])
-                }
-              >
-                <Text style={styles.btnText}>Delete</Text>
-              </TouchableOpacity>
+              {/* Frequency + Days Left */}
+              <View style={styles.metaRow}>
+                <Text style={styles.meta}>
+                  {e.type || "fixed"}/{e.rollover ? "rollover" : "no-rollover"} •{" "}
+                  {e.targetFrequency || "monthly"}
+                </Text>
+                {e.targetDate ? (
+                  <Text style={styles.daysLeftText}>
+                    {daysLeftText(e.targetDate)}
+                  </Text>
+                ) : null}
+              </View>
+
+              {/* Progress bar (only if target > 0) */}
+              {showProgress && (
+                <View style={styles.progressBox}>
+                  <View style={styles.progressTrack}>
+                    <View
+                      style={[
+                        styles.progressFill,
+                        { width: `${pct}%` },
+                      ]}
+                    />
+                  </View>
+                  <Text style={styles.progressLabel}>
+                    ${Number(e.amount || 0).toFixed(2)} / $
+                    {Number(target).toFixed(2)}{" "}
+                    {e.targetDate ? `• due ${fmtDate(e.targetDate)}` : ""}
+                  </Text>
+                </View>
+              )}
+
+              {/* Actions */}
+              <View style={styles.actions}>
+                <TouchableOpacity
+                  style={styles.btn}
+                  onPress={() => onOpenEdit(e)}
+                >
+                  <Text style={styles.btnText}>Edit</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.btn, styles.btnDanger]}
+                  onPress={() =>
+                    Alert.alert(
+                      "Delete Envelope",
+                      `Delete "${e.name}"? Remaining funds will return to Unallocated.`,
+                      [
+                        { text: "Cancel", style: "cancel" },
+                        {
+                          text: "Delete",
+                          style: "destructive",
+                          onPress: () => deleteEnvelope(e.id),
+                        },
+                      ]
+                    )
+                  }
+                >
+                  <Text style={styles.btnText}>Delete</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Quick allocate from Unallocated -> Envelope */}
+              <QuickAllocate envId={e.id} />
             </View>
-
-            {/* Quick allocate from Unallocated -> Envelope */}
-            <QuickAllocate envId={e.id} />
-          </View>
-        ))}
+          );
+        })}
       </ScrollView>
 
       {/* Edit Modal */}
-      <Modal visible={!!editingId} transparent animationType="fade" onRequestClose={onCloseEdit}>
+      <Modal
+        visible={!!editingId}
+        transparent
+        animationType="fade"
+        onRequestClose={onCloseEdit}
+      >
         <View style={styles.backdrop}>
           <View style={styles.sheet}>
             <Text style={styles.sheetTitle}>Edit Envelope</Text>
@@ -138,7 +200,11 @@ export default function EnvelopesScreen() {
             <Text style={styles.label}>Frequency</Text>
             <Row>
               {["weekly", "fortnightly", "monthly"].map((f) => (
-                <Chip key={f} active={editFreq === f} onPress={() => setEditFreq(f)}>
+                <Chip
+                  key={f}
+                  active={editFreq === f}
+                  onPress={() => setEditFreq(f)}
+                >
                   {f}
                 </Chip>
               ))}
@@ -149,15 +215,21 @@ export default function EnvelopesScreen() {
               style={styles.input}
               value={editDate}
               onChangeText={setEditDate}
-              placeholder="e.g. 2025-06-20"
+              placeholder="e.g. 2025-12-22"
               placeholderTextColor="#6B7280"
             />
 
             <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
-              <TouchableOpacity style={[styles.btn, { flex: 1 }]} onPress={onSaveEdit}>
+              <TouchableOpacity
+                style={[styles.btn, { flex: 1 }]}
+                onPress={onSaveEdit}
+              >
                 <Text style={styles.btnText}>Save</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.btn, styles.btnSecondary, { flex: 1 }]} onPress={onCloseEdit}>
+              <TouchableOpacity
+                style={[styles.btn, styles.btnSecondary, { flex: 1 }]}
+                onPress={onCloseEdit}
+              >
                 <Text style={styles.btnText}>Cancel</Text>
               </TouchableOpacity>
             </View>
@@ -175,7 +247,9 @@ function QuickAllocate({ envId }) {
 
   return (
     <View style={styles.qaRow}>
-      <Text style={styles.qaHint}>Unallocated: ${unallocated.toFixed(2)}</Text>
+      <Text style={styles.qaHint}>
+        Unallocated: ${Number(unallocated || 0).toFixed(2)}
+      </Text>
       <View style={{ flexDirection: "row", gap: 8 }}>
         <TextInput
           style={[styles.input, { flex: 1, paddingVertical: 8 }]}
@@ -202,7 +276,11 @@ function QuickAllocate({ envId }) {
 }
 
 function Row({ children }) {
-  return <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>{children}</View>;
+  return (
+    <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
+      {children}
+    </View>
+  );
 }
 
 function Chip({ active, onPress, children }) {
@@ -221,7 +299,15 @@ function Chip({ active, onPress, children }) {
           : { backgroundColor: "#151821", borderColor: "#23283A" },
       ]}
     >
-      <Text style={{ color: "#fff", fontWeight: "700", textTransform: "capitalize" }}>{children}</Text>
+      <Text
+        style={{
+          color: "#fff",
+          fontWeight: "700",
+          textTransform: "capitalize",
+        }}
+      >
+        {children}
+      </Text>
     </TouchableOpacity>
   );
 }
@@ -236,7 +322,10 @@ function daysLeftText(targetDateISO) {
   if (!targetDateISO) return "";
   const targetTs = new Date(targetDateISO).getTime();
   if (Number.isNaN(targetTs)) return "";
-  const diffDays = Math.max(0, Math.ceil((targetTs - Date.now()) / (1000 * 60 * 60 * 24)));
+  const diffDays = Math.max(
+    0,
+    Math.ceil((targetTs - Date.now()) / (1000 * 60 * 60 * 24))
+  );
   return `${diffDays} days left`;
 }
 
@@ -255,7 +344,19 @@ function fmtDate(iso) {
 /* Styles */
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#0E0F13", padding: 16 },
-  title: { color: "#fff", fontSize: 20, fontWeight: "800", textAlign: "center", marginBottom: 14 },
+  title: {
+    color: "#fff",
+    fontSize: 20,
+    fontWeight: "800",
+    textAlign: "center",
+    marginBottom: 8,
+  },
+  unallocTop: {
+    color: "#9BA3B4",
+    fontSize: 12,
+    textAlign: "center",
+    marginBottom: 10,
+  },
   empty: { color: "#9BA3B4", textAlign: "center", marginTop: 20 },
 
   card: {
@@ -267,16 +368,29 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
 
-  topRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  topRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
   name: { color: "#fff", fontWeight: "800", fontSize: 16 },
   balance: { color: "#4FD1C5", fontWeight: "800", fontSize: 16 },
 
-  metaRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 6 },
+  metaRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 6,
+  },
   meta: { color: "#9BA3B4", fontSize: 12 },
   daysLeftText: { color: "#9BA3B4", fontSize: 12 },
 
   progressBox: { marginTop: 10 },
-  progressTrack: { height: 8, borderRadius: 6, backgroundColor: "#23283A", overflow: "hidden" },
+  progressTrack: {
+    height: 8,
+    borderRadius: 6,
+    backgroundColor: "#23283A",
+    overflow: "hidden",
+  },
   progressFill: { height: 8, backgroundColor: "#2563EB" },
   progressLabel: { color: "#9BA3B4", fontSize: 12, marginTop: 6 },
 
@@ -298,10 +412,26 @@ const styles = StyleSheet.create({
   qaHint: { color: "#9BA3B4", fontSize: 12, marginBottom: 6 },
 
   /* Modal */
-  backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", padding: 20 },
-  sheet: { backgroundColor: "#151821", borderRadius: 14, padding: 16, borderWidth: 1, borderColor: "#23283A" },
+  backdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    padding: 20,
+  },
+  sheet: {
+    backgroundColor: "#151821",
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#23283A",
+  },
   sheetTitle: { color: "#fff", fontSize: 18, fontWeight: "800", marginBottom: 8 },
-  label: { color: "#9BA3B4", fontSize: 12, marginBottom: 6, marginTop: 8 },
+  label: {
+    color: "#9BA3B4",
+    fontSize: 12,
+    marginBottom: 6,
+    marginTop: 8,
+  },
   input: {
     backgroundColor: "#0E1017",
     color: "#fff",

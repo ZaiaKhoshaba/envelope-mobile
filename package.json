@@ -5,9 +5,8 @@
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
-    "start:lan": "expo start --lan -c",
     "start:tunnel": "expo start --tunnel -c",
-    "start:auto": "powershell -Command \"$env:REACT_NATIVE_PACKAGER_HOSTNAME = (Get-NetIPAddress | Where-Object {$_.InterfaceAlias -match 'Wi-Fi' -and $_.AddressFamily -eq 'IPv4'} | Select-Object -ExpandProperty IPAddress); npx expo start --lan -c\"",
+    "start:auto": "powershell -Command \"$ip = (Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Sort-Object RouteMetric | Select-Object -First 1 | ForEach-Object { (Get-NetIPAddress -InterfaceIndex $_.InterfaceIndex -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '169.254*' } | Select-Object -First 1).IPAddress }); $env:REACT_NATIVE_PACKAGER_HOSTNAME = $ip; $env:EXPO_PUBLIC_BANK_BACKEND_URL = 'http://' + $ip + ':4000'; Write-Host ('Using packager host: ' + $env:REACT_NATIVE_PACKAGER_HOSTNAME); Write-Host ('Using backend: ' + $env:EXPO_PUBLIC_BANK_BACKEND_URL); npx expo start --lan -c\"",
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
@@ -18,6 +17,7 @@
     "@react-native-async-storage/async-storage": "^2.2.0",
     "expo": "^54.0.12",
     "expo-auth-session": "^7.0.8",
+    "expo-dev-client": "~6.0.20",
     "expo-keep-awake": "~15.0.7",
     "expo-linking": "~8.0.8",
     "expo-router": "~6.0.10",
