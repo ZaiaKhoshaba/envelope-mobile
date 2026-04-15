@@ -8,6 +8,7 @@ import React, {
   useCallback,
 } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useAuth } from "./AuthContext";
 
 const BudgetContext = createContext(null);
 
@@ -30,6 +31,10 @@ const defaultState = {
     dayOfMonth: null, // 1–31 if monthly
     anchorDate: null, // ISO string
   },
+
+  // Spend waiting to be assigned to an envelope (drives SpendChooserModal)
+  // Shape: { id, merchant, amount, remaining, postedAt } | null
+  pendingSpend: null,
 };
 
 /* -----------------------------------------------------------
@@ -158,12 +163,30 @@ function reducer(state, action) {
         unallocated: action.unallocated,
       };
 
+    // ── Pending spend (drives SpendChooserModal) ────────────────────────────
+
+    case "SET_PENDING_SPEND":
+      return { ...state, pendingSpend: action.pendingSpend };
+
+    case "CLEAR_PENDING_SPEND":
+      return { ...state, pendingSpend: null };
+
+    // Partial allocation from one source; clears pendingSpend when remaining hits 0
+    case "COMMIT_SPEND_PART":
+      return {
+        ...state,
+        envelopes:    action.envelopes,
+        transactions: action.transactions,
+        pendingSpend: action.pendingSpend, // null when fully allocated
+      };
+
     case "RESET_ALL":
       return {
         ...defaultState,
         envelopes: [],
         transactions: [],
         incomeSchedule: { ...defaultState.incomeSchedule },
+        pendingSpend: null,
       };
 
     default:
@@ -254,12 +277,19 @@ function autoAllocateIncome({ incomeAmount, nowISO, envelopes, incomeSchedule })
 ----------------------------------------------------------- */
 export function BudgetProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, defaultState);
+  const { user } = useAuth();
 
-  // Load saved state on startup
+  // Load the correct user's budget whenever they log in or switch accounts.
+  // Resets to empty first so stale data never bleeds across accounts.
   useEffect(() => {
+    if (!user?.id) {
+      dispatch({ type: "RESET_ALL" });
+      return;
+    }
     (async () => {
       try {
-        const saved = await AsyncStorage.getItem("budgetState");
+        dispatch({ type: "RESET_ALL" }); // clear any previous user's data immediately
+        const saved = await AsyncStorage.getItem(`budgetState_${user.id}`);
         if (saved) {
           dispatch({ type: "LOAD_STATE", payload: JSON.parse(saved) });
         }
@@ -267,12 +297,13 @@ export function BudgetProvider({ children }) {
         console.log("State load error:", e);
       }
     })();
-  }, []);
+  }, [user?.id]);
 
-  // Persist on every state change
+  // Persist on every state change — only when a user is logged in
   useEffect(() => {
-    AsyncStorage.setItem("budgetState", JSON.stringify(state));
-  }, [state]);
+    if (!user?.id) return;
+    AsyncStorage.setItem(`budgetState_${user.id}`, JSON.stringify(state));
+  }, [state, user?.id]);
 
   /* -----------------------------------------------------------
      COMPUTE TOTALS
@@ -283,14 +314,25 @@ export function BudgetProvider({ children }) {
       return sum;
     }, 0);
 
+    // Only deduct spends that have been allocated — unallocated spends don't
+    // affect the total until the user assigns them to an envelope, so that
+    // allocating a spend reduces total AND envelope by the same amount,
+    // leaving unallocated unchanged (the correct real-world behaviour).
+    const allocatedSpendTotal = state.transactions.reduce((sum, t) => {
+      if (t.kind === "spend" && t.allocated) {
+        return sum + Math.abs(Number(t.amount) || 0);
+      }
+      return sum;
+    }, 0);
+
     const envelopeSum = state.envelopes.reduce(
       (sum, e) => sum + (Number(e.amount) || 0),
       0
     );
 
-    const total = totalIncome;
-    const allocated = envelopeSum;
-    const unallocated = Math.max(0, totalIncome - envelopeSum);
+    const total       = Math.max(0, totalIncome - allocatedSpendTotal);
+    const allocated   = envelopeSum;
+    const unallocated = Math.max(0, total - envelopeSum);
 
     dispatch({
       type: "SET_TOTALS",
@@ -451,6 +493,112 @@ export function BudgetProvider({ children }) {
   }, [state.envelopes]);
 
   /* -----------------------------------------------------------
+     PENDING SPEND — drives SpendChooserModal
+  ----------------------------------------------------------- */
+
+  /**
+   * Mark a spend transaction as "pending allocation".
+   * Builds the pendingSpend descriptor from any transaction-like object.
+   * Safe to call with a transaction that may not yet be in state.transactions
+   * (e.g. it arrived via a push notification before a sync).
+   */
+  const setPendingSpend = useCallback((tx) => {
+    const amount    = Math.abs(Number(tx.amount || 0));
+    const alreadyUsed = (tx.allocations || []).reduce((s, a) => s + (Number(a.used) || 0), 0);
+    const remaining = Number((amount - alreadyUsed).toFixed(2));
+
+    if (remaining <= 0) return; // Already fully allocated — nothing to show
+
+    dispatch({
+      type: "SET_PENDING_SPEND",
+      pendingSpend: {
+        id:       tx.id,
+        merchant: tx.merchant || tx.description || "Unknown merchant",
+        amount,
+        remaining,
+        postedAt: tx.postedAt || new Date().toISOString(),
+      },
+    });
+  }, []);
+
+  /** Dismiss the modal without recording any allocation. */
+  const cancelSpend = useCallback(() => {
+    dispatch({ type: "CLEAR_PENDING_SPEND" });
+  }, []);
+
+  /**
+   * Allocate as much of the pending spend as possible from `sourceId`.
+   *  - sourceId === "unallocated" → draws from unallocated pool (no envelope deducted)
+   *  - otherwise → deducts from the matching envelope, capped at its balance
+   * Clears pendingSpend when remaining hits zero.
+   * If the transaction is not yet in state.transactions it is inserted automatically.
+   */
+  const commitSpendPart = useCallback((sourceId) => {
+    const ps = state.pendingSpend;
+    if (!ps || ps.remaining <= 0) return;
+
+    // How much this source can cover
+    let available;
+    if (sourceId === "unallocated") {
+      available = state.unallocated;
+    } else {
+      const env = state.envelopes.find(e => e.id === sourceId);
+      available = env ? Number(env.amount || 0) : 0;
+    }
+
+    const used         = Math.min(ps.remaining, Math.max(0, available));
+    if (used <= 0) return; // Source is empty — nothing to do
+
+    const newRemaining = Number((ps.remaining - used).toFixed(2));
+
+    // Deduct from envelope (unallocated is derived so no direct state change needed)
+    const envelopesCopy =
+      sourceId === "unallocated"
+        ? state.envelopes
+        : state.envelopes.map(e =>
+            e.id === sourceId
+              ? { ...e, amount: Math.max(0, Number(e.amount || 0) - used) }
+              : e
+          );
+
+    // Update (or create) the transaction record
+    const txExists = state.transactions.find(t => t.id === ps.id);
+    let transactionsCopy;
+
+    if (txExists) {
+      transactionsCopy = state.transactions.map(t => {
+        if (t.id !== ps.id) return t;
+        return {
+          ...t,
+          allocations: [...(t.allocations || []), { sourceId, used }],
+          allocated:   newRemaining <= 0,
+        };
+      });
+    } else {
+      // Transaction arrived via push notification before a sync — insert it now
+      const newTx = {
+        id:          ps.id,
+        kind:        "spend",
+        amount:      -ps.amount,
+        merchant:    ps.merchant,
+        description: ps.merchant,
+        imported:    true,
+        postedAt:    ps.postedAt,
+        allocations: [{ sourceId, used }],
+        allocated:   newRemaining <= 0,
+      };
+      transactionsCopy = [...state.transactions, newTx];
+    }
+
+    dispatch({
+      type:         "COMMIT_SPEND_PART",
+      envelopes:    envelopesCopy,
+      transactions: transactionsCopy,
+      pendingSpend: newRemaining > 0 ? { ...ps, remaining: newRemaining } : null,
+    });
+  }, [state]);
+
+  /* -----------------------------------------------------------
      ✅ FIXED: importBankTransactions writes into state.transactions
      - uses EXPO_PUBLIC_BANK_BACKEND_URL if present
      - otherwise imports 40 mock txs
@@ -566,12 +714,14 @@ export function BudgetProvider({ children }) {
 
   const resetAll = useCallback(async () => {
     try {
-      await AsyncStorage.removeItem("budgetState");
+      if (user?.id) {
+        await AsyncStorage.removeItem(`budgetState_${user.id}`);
+      }
     } catch (e) {
       console.log("Reset storage error:", e);
     }
     dispatch({ type: "RESET_ALL" });
-  }, []);
+  }, [user?.id]);
 
   /* -----------------------------------------------------------
      CONTEXT VALUE
@@ -596,6 +746,11 @@ export function BudgetProvider({ children }) {
 
       simulateRandomSpend,
       importBankTransactions,
+
+      // Pending spend (SpendChooserModal)
+      setPendingSpend,
+      commitSpendPart,
+      cancelSpend,
     }),
     [
       state,
@@ -609,6 +764,9 @@ export function BudgetProvider({ children }) {
       resetAll,
       simulateRandomSpend,
       importBankTransactions,
+      setPendingSpend,
+      commitSpendPart,
+      cancelSpend,
     ]
   );
 

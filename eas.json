@@ -9,10 +9,16 @@
       "distribution": "internal"
     },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_BANK_BACKEND_URL": "https://envelope-bank-backend.onrender.com"
+      }
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_BANK_BACKEND_URL": "https://envelope-bank-backend.onrender.com"
+      }
     }
   },
   "submit": {

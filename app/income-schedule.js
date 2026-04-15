@@ -1,87 +1,150 @@
 // app/income-schedule.js
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   View,
   Text,
+  TextInput,
   StyleSheet,
   ScrollView,
-  TextInput,
   TouchableOpacity,
   Alert,
+  SafeAreaView,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useBudget } from "../context/BudgetContext";
+import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
+
+const FREQUENCIES = ["weekly", "fortnightly", "monthly"];
+const DAYS = [
+  { value: 1, label: "Mon" },
+  { value: 2, label: "Tue" },
+  { value: 3, label: "Wed" },
+  { value: 4, label: "Thu" },
+  { value: 5, label: "Fri" },
+  { value: 6, label: "Sat" },
+  { value: 7, label: "Sun" },
+];
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function isoToYmd(iso) {
+  try {
+    const d = new Date(iso);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  } catch { return ""; }
+}
+
+function getNextPayDates(frequency, dayOfWeek, dayOfMonth, anchorDate, count = 3) {
+  const dates = [];
+  try {
+    let base = anchorDate ? new Date(anchorDate) : new Date();
+    if (isNaN(base.getTime())) base = new Date();
+
+    const now = new Date();
+    // Advance past today if anchor is in the past
+    if (frequency === "weekly" || frequency === "fortnightly") {
+      const interval = frequency === "weekly" ? 7 : 14;
+      while (base <= now) base = new Date(base.getTime() + interval * 86400000);
+      for (let i = 0; i < count; i++) {
+        dates.push(new Date(base));
+        base = new Date(base.getTime() + interval * 86400000);
+      }
+    } else {
+      // monthly
+      let d = new Date(now.getFullYear(), now.getMonth(), Number(dayOfMonth) || 1);
+      if (d <= now) d = new Date(d.getFullYear(), d.getMonth() + 1, Number(dayOfMonth) || 1);
+      for (let i = 0; i < count; i++) {
+        dates.push(new Date(d));
+        d = new Date(d.getFullYear(), d.getMonth() + 1, Number(dayOfMonth) || 1);
+      }
+    }
+  } catch { /* skip */ }
+  return dates;
+}
+
+function formatDate(d) {
+  return d.toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+}
+
+// ── Segmented control ─────────────────────────────────────────────────────────
+
+function SegmentedControl({ options, value, onChange, colors, labelFn }) {
+  return (
+    <View style={[seg.wrap, { backgroundColor: colors.cardAlt, borderColor: colors.border }]}>
+      {options.map(opt => {
+        const active = value === opt;
+        return (
+          <TouchableOpacity
+            key={String(opt)}
+            style={[seg.item, active && { backgroundColor: colors.accent }]}
+            onPress={() => onChange(opt)}
+            activeOpacity={0.8}
+          >
+            <Text style={[seg.text, { color: active ? "#fff" : colors.textSecondary }]}>
+              {labelFn ? labelFn(opt) : String(opt)}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
+
+// ── Main screen ───────────────────────────────────────────────────────────────
 
 export default function IncomeScheduleScreen() {
   const router = useRouter();
   const { state, setIncomeSchedule } = useBudget();
+  const { colors } = useTheme();
+  const s = makeStyles(colors);
 
   const existing = state.incomeSchedule || {};
 
-  const [amount, setAmount] = useState(
-    existing.amount != null ? String(existing.amount) : ""
-  );
-  const [frequency, setFrequency] = useState(
-    existing.frequency || "fortnightly"
-  );
-  const [dayOfWeek, setDayOfWeek] = useState(
-    existing.dayOfWeek != null ? existing.dayOfWeek : 1 // 1 = Mon
-  );
-  const [dayOfMonth, setDayOfMonth] = useState(
-    existing.dayOfMonth != null ? String(existing.dayOfMonth) : "1"
-  );
-  const [anchorDate, setAnchorDate] = useState(
-    existing.anchorDate ? isoToYmd(existing.anchorDate) : ""
-  );
+  const [amount, setAmount]           = useState(existing.amount != null ? String(existing.amount) : "");
+  const [frequency, setFrequency]     = useState(existing.frequency || "fortnightly");
+  const [dayOfWeek, setDayOfWeek]     = useState(existing.dayOfWeek ?? 5); // default Friday
+  const [dayOfMonth, setDayOfMonth]   = useState(existing.dayOfMonth != null ? String(existing.dayOfMonth) : "1");
+  const [anchorDate, setAnchorDate]   = useState(existing.anchorDate ? isoToYmd(existing.anchorDate) : "");
 
-  // If state changes under us (unlikely, but safe), sync once
-  useEffect(() => {
-    if (existing.amount != null) setAmount(String(existing.amount));
-    if (existing.frequency) setFrequency(existing.frequency);
-    if (existing.dayOfWeek != null) setDayOfWeek(existing.dayOfWeek);
-    if (existing.dayOfMonth != null)
-      setDayOfMonth(String(existing.dayOfMonth));
-    if (existing.anchorDate) setAnchorDate(isoToYmd(existing.anchorDate));
-  }, []); // run once
+  const capitalize = str => str.charAt(0).toUpperCase() + str.slice(1);
 
-  const days = [
-    { value: 1, label: "Mon" },
-    { value: 2, label: "Tue" },
-    { value: 3, label: "Wed" },
-    { value: 4, label: "Thu" },
-    { value: 5, label: "Fri" },
-    { value: 6, label: "Sat" },
-    { value: 7, label: "Sun" },
-  ];
+  // ── Next pay dates preview ──────────────────────────────────────────────────
+  const nextDates = useMemo(() => {
+    return getNextPayDates(frequency, dayOfWeek, dayOfMonth, anchorDate || null, 3);
+  }, [frequency, dayOfWeek, dayOfMonth, anchorDate]);
+
+  const summaryText = useMemo(() => {
+    const amt = Number(amount || 0);
+    if (!amt) return null;
+    const freqLabel = frequency === "weekly" ? "every week"
+      : frequency === "fortnightly" ? "every fortnight"
+      : "every month";
+    const dayLabel = frequency === "monthly"
+      ? `on day ${dayOfMonth} of the month`
+      : DAYS.find(d => d.value === dayOfWeek)?.label
+        ? `on ${["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"][dayOfWeek - 1]}s`
+        : "";
+    return `You receive $${amt.toFixed(2)} ${freqLabel}${dayLabel ? ` ${dayLabel}` : ""}.`;
+  }, [amount, frequency, dayOfWeek, dayOfMonth]);
 
   const onSave = () => {
     const amt = Number(amount || 0);
-    if (!amt || Number.isNaN(amt)) {
-      Alert.alert("Income", "Please enter a valid income amount.");
+    if (!amt || isNaN(amt)) {
+      Alert.alert("Pay amount", "Please enter a valid income amount.");
       return;
     }
-
-    let dayOfMonthNumber = null;
     if (frequency === "monthly") {
       const n = parseInt(dayOfMonth, 10);
       if (!n || n < 1 || n > 31) {
-        Alert.alert(
-          "Day of Month",
-          "Please enter a valid day of month between 1 and 31."
-        );
+        Alert.alert("Day of month", "Please enter a valid day between 1 and 31.");
         return;
       }
-      dayOfMonthNumber = n;
     }
-
     let anchorISO = null;
     if (anchorDate.trim()) {
       const d = new Date(anchorDate.trim());
-      if (Number.isNaN(d.getTime())) {
-        Alert.alert(
-          "First Pay Date",
-          "Please enter a valid date in YYYY-MM-DD format."
-        );
+      if (isNaN(d.getTime())) {
+        Alert.alert("First pay date", "Please use YYYY-MM-DD format, e.g. 2025-12-06");
         return;
       }
       anchorISO = d.toISOString();
@@ -91,259 +154,238 @@ export default function IncomeScheduleScreen() {
       amount: amt,
       frequency,
       dayOfWeek: frequency === "monthly" ? null : dayOfWeek,
-      dayOfMonth: frequency === "monthly" ? dayOfMonthNumber : null,
+      dayOfMonth: frequency === "monthly" ? parseInt(dayOfMonth, 10) : null,
       anchorDate: anchorISO,
     });
 
-    Alert.alert("Saved", "Your income schedule has been updated.", [
-      {
-        text: "OK",
-        onPress: () => router.back(),
-      },
+    Alert.alert("Saved ✓", "Your income schedule has been updated.", [
+      { text: "Done", onPress: () => router.back() },
     ]);
   };
 
-  const summaryText = buildSummary({
-    amount,
-    frequency,
-    dayOfWeek,
-    dayOfMonth,
-    anchorDate,
-  });
-
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={{ paddingBottom: 40 }}
-    >
-      <Text style={styles.title}>Income Schedule</Text>
+    <SafeAreaView style={s.screen}>
+      <ScrollView
+        contentContainerStyle={{ padding: spacing.lg, paddingBottom: 60, gap: spacing.lg }}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
 
-      {/* Amount */}
-      <Text style={styles.label}>Pay Amount</Text>
-      <TextInput
-        style={styles.input}
-        value={amount}
-        onChangeText={setAmount}
-        keyboardType="decimal-pad"
-        placeholder="e.g. 3456.78"
-        placeholderTextColor="#6B7280"
-      />
-
-      {/* Frequency */}
-      <Text style={styles.label}>How often are you paid?</Text>
-      <View style={styles.row}>
-        {["weekly", "fortnightly", "monthly"].map((f) => (
-          <Chip
-            key={f}
-            active={frequency === f}
-            onPress={() => setFrequency(f)}
-          >
-            {f}
-          </Chip>
-        ))}
-      </View>
-
-      {/* Day selector */}
-      {frequency === "monthly" ? (
-        <>
-          <Text style={styles.label}>Day of month</Text>
-          <TextInput
-            style={styles.input}
-            value={dayOfMonth}
-            onChangeText={setDayOfMonth}
-            keyboardType="number-pad"
-            placeholder="1–31"
-            placeholderTextColor="#6B7280"
-          />
-        </>
-      ) : (
-        <>
-          <Text style={styles.label}>Day of week</Text>
-          <View style={styles.row}>
-            {days.map((d) => (
-              <Chip
-                key={d.value}
-                active={dayOfWeek === d.value}
-                onPress={() => setDayOfWeek(d.value)}
-              >
-                {d.label}
-              </Chip>
-            ))}
+        {/* ── Pay amount ── */}
+        <View style={inc.fieldWrap}>
+          <Text style={[inc.label, { color: colors.textPrimary }]}>Pay amount</Text>
+          <Text style={[inc.hint, { color: colors.textSecondary }]}>
+            Your take-home pay per period
+          </Text>
+          <View style={[inc.amountWrap, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[inc.dollarSign, { color: colors.textSecondary }]}>$</Text>
+            <TextInput
+              style={[inc.amountInput, { color: colors.textPrimary }]}
+              placeholder="0.00"
+              placeholderTextColor={colors.textMuted}
+              keyboardType="decimal-pad"
+              value={amount}
+              onChangeText={setAmount}
+              returnKeyType="done"
+            />
           </View>
-        </>
-      )}
+        </View>
 
-      {/* Anchor date */}
-      <Text style={styles.label}>First pay date (anchor)</Text>
-      <TextInput
-        style={styles.input}
-        value={anchorDate}
-        onChangeText={setAnchorDate}
-        placeholder="e.g. 2025-12-01"
-        placeholderTextColor="#6B7280"
-      />
+        {/* ── Frequency ── */}
+        <View style={inc.fieldWrap}>
+          <Text style={[inc.label, { color: colors.textPrimary }]}>Pay frequency</Text>
+          <SegmentedControl
+            options={FREQUENCIES}
+            value={frequency}
+            onChange={setFrequency}
+            colors={colors}
+            labelFn={capitalize}
+          />
+        </View>
 
-      {/* Summary */}
-      <View style={styles.summaryBox}>
-        <Text style={styles.summaryTitle}>This means:</Text>
-        <Text style={styles.summaryText}>{summaryText}</Text>
-      </View>
+        {/* ── Day selector ── */}
+        {frequency === "monthly" ? (
+          <View style={inc.fieldWrap}>
+            <Text style={[inc.label, { color: colors.textPrimary }]}>Day of month</Text>
+            <Text style={[inc.hint, { color: colors.textSecondary }]}>Which day do you get paid?</Text>
+            <TextInput
+              style={[s.input, { marginTop: spacing.xs }]}
+              value={dayOfMonth}
+              onChangeText={setDayOfMonth}
+              keyboardType="number-pad"
+              placeholder="e.g. 15"
+              placeholderTextColor={colors.textMuted}
+              returnKeyType="done"
+            />
+          </View>
+        ) : (
+          <View style={inc.fieldWrap}>
+            <Text style={[inc.label, { color: colors.textPrimary }]}>Pay day</Text>
+            <Text style={[inc.hint, { color: colors.textSecondary }]}>Which day of the week?</Text>
+            <View style={{ marginTop: spacing.xs }}>
+              <SegmentedControl
+                options={DAYS.map(d => d.value)}
+                value={dayOfWeek}
+                onChange={setDayOfWeek}
+                colors={colors}
+                labelFn={v => DAYS.find(d => d.value === v)?.label ?? ""}
+              />
+            </View>
+          </View>
+        )}
 
-      {/* Save button */}
-      <TouchableOpacity style={styles.saveBtn} onPress={onSave}>
-        <Text style={styles.saveBtnText}>Save Income Schedule</Text>
-      </TouchableOpacity>
-    </ScrollView>
+        {/* ── Anchor date ── */}
+        <View style={inc.fieldWrap}>
+          <Text style={[inc.label, { color: colors.textPrimary }]}>First pay date</Text>
+          <Text style={[inc.hint, { color: colors.textSecondary }]}>
+            Optional — helps calculate future pay dates accurately
+          </Text>
+          <TextInput
+            style={[s.input, { marginTop: spacing.xs }]}
+            value={anchorDate}
+            onChangeText={setAnchorDate}
+            placeholder="YYYY-MM-DD  e.g. 2025-12-06"
+            placeholderTextColor={colors.textMuted}
+            returnKeyType="done"
+          />
+        </View>
+
+        {/* ── Summary sentence ── */}
+        {summaryText && (
+          <View style={[inc.summaryBox, { backgroundColor: colors.accentSoft, borderColor: colors.accent }]}>
+            <Text style={[inc.summaryText, { color: colors.accent }]}>{summaryText}</Text>
+          </View>
+        )}
+
+        {/* ── Next pay dates preview ── */}
+        {amount ? (
+          <View style={inc.fieldWrap}>
+            <Text style={[inc.label, { color: colors.textPrimary }]}>Next pay dates</Text>
+            <View style={[inc.datesCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              {nextDates.map((d, i) => (
+                <View
+                  key={i}
+                  style={[
+                    inc.dateRow,
+                    i < nextDates.length - 1 && { borderBottomColor: colors.border, borderBottomWidth: 1 },
+                  ]}
+                >
+                  <View style={[inc.dateBadge, { backgroundColor: colors.accentSoft }]}>
+                    <Text style={[inc.dateBadgeText, { color: colors.accent }]}>{i + 1}</Text>
+                  </View>
+                  <Text style={[inc.dateText, { color: colors.textPrimary }]}>{formatDate(d)}</Text>
+                  <Text style={[inc.dateAmount, { color: colors.success }]}>
+                    +${Number(amount || 0).toFixed(2)}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        ) : null}
+
+        {/* ── Save ── */}
+        <TouchableOpacity
+          style={s.primaryBtn}
+          onPress={onSave}
+          activeOpacity={0.85}
+        >
+          <Text style={s.primaryBtnText}>Save income schedule</Text>
+        </TouchableOpacity>
+
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
-/* Helpers */
+// ── Styles ────────────────────────────────────────────────────────────────────
 
-function buildSummary({ amount, frequency, dayOfWeek, dayOfMonth, anchorDate }) {
-  const amt = Number(amount || 0);
-  if (!amt) {
-    return "Enter your pay amount and schedule details above.";
-  }
-
-  const freqLabel =
-    frequency === "weekly"
-      ? "every week"
-      : frequency === "fortnightly"
-      ? "every fortnight"
-      : "every month";
-
-  let dayPart = "";
-  if (frequency === "monthly") {
-    dayPart = dayOfMonth ? `on day ${dayOfMonth} of the month` : "";
-  } else {
-    const label =
-      dayOfWeek === 1
-        ? "Monday"
-        : dayOfWeek === 2
-        ? "Tuesday"
-        : dayOfWeek === 3
-        ? "Wednesday"
-        : dayOfWeek === 4
-        ? "Thursday"
-        : dayOfWeek === 5
-        ? "Friday"
-        : dayOfWeek === 6
-        ? "Saturday"
-        : dayOfWeek === 7
-        ? "Sunday"
-        : "";
-    dayPart = label ? `on ${label}` : "";
-  }
-
-  let anchorPart = "";
-  if (anchorDate) {
-    anchorPart = `starting from ${anchorDate}`;
-  }
-
-  return `You get $${amt.toFixed(2)} ${freqLabel} ${dayPart}${
-    anchorPart ? `, ${anchorPart}` : ""
-  }.`;
-}
-
-function isoToYmd(iso) {
-  try {
-    const d = new Date(iso);
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
-  } catch {
-    return "";
-  }
-}
-
-/* Chip component */
-
-function Chip({ active, onPress, children }) {
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      style={[
-        styles.chip,
-        active
-          ? { backgroundColor: "rgba(37,99,235,0.15)", borderColor: "#2563EB" }
-          : { backgroundColor: "#151821", borderColor: "#23283A" },
-      ]}
-    >
-      <Text style={styles.chipText}>{children}</Text>
-    </TouchableOpacity>
-  );
-}
-
-/* Styles */
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#0E0F13", padding: 16 },
-  title: {
-    color: "#FFFFFF",
-    fontSize: 20,
-    fontWeight: "800",
-    textAlign: "center",
-    marginBottom: 16,
-  },
-  label: {
-    color: "#9BA3B4",
-    fontSize: 12,
-    marginTop: 10,
-    marginBottom: 6,
-  },
-  input: {
-    backgroundColor: "#0E1017",
-    color: "#fff",
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#23283A",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  row: {
+const seg = StyleSheet.create({
+  wrap: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  chip: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 999,
+    borderRadius: radius.md,
     borderWidth: 1,
+    overflow: "hidden",
+    padding: 3,
+    gap: 3,
   },
-  chipText: {
-    color: "#fff",
-    fontWeight: "700",
-    textTransform: "capitalize",
-  },
-  summaryBox: {
-    marginTop: 16,
-    padding: 12,
-    backgroundColor: "#151821",
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#23283A",
-  },
-  summaryTitle: {
-    color: "#9BA3B4",
-    fontSize: 12,
-    marginBottom: 4,
-  },
-  summaryText: {
-    color: "#FFFFFF",
-    fontSize: 14,
-  },
-  saveBtn: {
-    marginTop: 20,
-    backgroundColor: "#2563EB",
-    borderRadius: 12,
-    paddingVertical: 16,
+  item: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.sm,
     alignItems: "center",
   },
-  saveBtnText: {
-    color: "#FFFFFF",
-    fontWeight: "800",
-    fontSize: 16,
+  text: {
+    fontSize: typography.sm,
+    fontWeight: typography.semibold,
+  },
+});
+
+const inc = StyleSheet.create({
+  fieldWrap: { gap: spacing.xs },
+  label: { fontSize: typography.md, fontWeight: typography.semibold },
+  hint: { fontSize: typography.sm },
+
+  amountWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: radius.md,
+    borderWidth: 1,
+    paddingHorizontal: spacing.lg,
+    height: 58,
+    gap: spacing.sm,
+    marginTop: spacing.xs,
+  },
+  dollarSign: {
+    fontSize: typography.xl,
+    fontWeight: typography.bold,
+  },
+  amountInput: {
+    flex: 1,
+    fontSize: typography.xxl,
+    fontWeight: typography.heavy,
+  },
+
+  summaryBox: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    padding: spacing.md,
+  },
+  summaryText: {
+    fontSize: typography.sm,
+    fontWeight: typography.medium,
+    lineHeight: 20,
+  },
+
+  datesCard: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    overflow: "hidden",
+    marginTop: spacing.xs,
+  },
+  dateRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    padding: spacing.lg,
+  },
+  dateBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dateBadgeText: {
+    fontSize: typography.sm,
+    fontWeight: typography.bold,
+  },
+  dateText: {
+    flex: 1,
+    fontSize: typography.md,
+    fontWeight: typography.medium,
+  },
+  dateAmount: {
+    fontSize: typography.sm,
+    fontWeight: typography.bold,
   },
 });

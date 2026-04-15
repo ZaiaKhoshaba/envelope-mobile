@@ -1,143 +1,329 @@
 // app/edit-envelope.js
-import React, { useMemo, useState, useEffect } from "react";
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import React, { useState, useEffect } from "react";
+import {
+  View,
+  Text,
+  TextInput,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Alert,
+  Switch,
+  SafeAreaView,
+} from "react-native";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { useBudget } from "../context/BudgetContext";
+import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
 
-const FREQS = ["Weekly", "Fortnightly", "Monthly"];
+const FREQUENCIES = ["weekly", "fortnightly", "monthly"];
 
-export default function EditEnvelopeScreen() {
-  const { id } = useLocalSearchParams();
-  const router = useRouter();
-  const { state, editEnvelope } = useBudget();
-
-  // If id is missing, immediately go back (prevents “Envelope not found” showing in Envelopes list)
-  useEffect(() => {
-    if (!id) router.back();
-  }, [id, router]);
-
-  const env = useMemo(() => state.envelopes.find((e) => e.id === id), [state.envelopes, id]);
-
-  const [targetBudgetText, setTargetBudgetText] = useState(
-    env?.targetBudget != null ? String(env.targetBudget) : ""
-  );
-  const [targetFreq, setTargetFreq] = useState(env?.targetFreq || "Monthly");
-
-  if (!env) {
-    return (
-      <View style={[styles.container, { justifyContent: "center", alignItems: "center" }]}>
-        <Text style={{ color: "#fff" }}>Envelope not found.</Text>
-      </View>
-    );
-  }
-
-  const onSave = () => {
-    const tb = Number(targetBudgetText);
-    if (Number.isNaN(tb) || tb < 0) {
-      Alert.alert("Invalid amount", "Please enter a number ≥ 0.");
-      return;
-    }
-    editEnvelope(env.id, {
-      targetBudget: Number(tb.toFixed(2)),
-      targetFreq,
-    });
-    router.back();
-  };
-
+function SegmentedControl({ options, value, onChange, colors, labelFn }) {
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Edit “{env.name}”</Text>
-      <Text style={styles.subtitle}>Current balance: ${env.amount.toFixed(2)}</Text>
-
-      <View style={styles.fieldBlock}>
-        <Text style={styles.label}>Target Budget (optional)</Text>
-        <TextInput
-          value={targetBudgetText}
-          onChangeText={setTargetBudgetText}
-          keyboardType="decimal-pad"
-          placeholder="0"
-          placeholderTextColor="#6B7280"
-          style={styles.input}
-        />
-        <Text style={styles.help}>
-          Set to <Text style={{ fontWeight: "800", color: "#fff" }}>0</Text> to hide the progress bar.
-        </Text>
-      </View>
-
-      <View style={styles.fieldBlock}>
-        <Text style={styles.label}>Frequency</Text>
-        <View style={styles.chipsRow}>
-          {FREQS.map((f) => (
-            <TouchableOpacity
-              key={f}
-              style={[styles.chip, targetFreq === f && styles.chipActive]}
-              onPress={() => setTargetFreq(f)}
-            >
-              <Text style={[styles.chipText, targetFreq === f && styles.chipTextActive]}>{f}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
-
-      <View style={styles.actionsRow}>
-        <TouchableOpacity style={styles.cancelBtn} onPress={() => router.back()}>
-          <Text style={styles.cancelText}>Cancel</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.saveBtn} onPress={onSave}>
-          <Text style={styles.saveText}>Save</Text>
-        </TouchableOpacity>
-      </View>
+    <View style={[seg.wrap, { backgroundColor: colors.cardAlt, borderColor: colors.border }]}>
+      {options.map(opt => {
+        const active = value === opt;
+        return (
+          <TouchableOpacity
+            key={opt}
+            style={[seg.item, active && { backgroundColor: colors.accent }]}
+            onPress={() => onChange(opt)}
+            activeOpacity={0.8}
+          >
+            <Text style={[seg.text, { color: active ? "#fff" : colors.textSecondary }]}>
+              {labelFn ? labelFn(opt) : opt}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#0E0F13", padding: 16 },
-  title: { color: "#fff", fontSize: 20, fontWeight: "800" },
-  subtitle: { color: "#9BA3B4", marginTop: 6, marginBottom: 16 },
+function Field({ label, hint, children }) {
+  const { colors } = useTheme();
+  return (
+    <View style={field.wrap}>
+      <View style={field.labelRow}>
+        <Text style={[field.label, { color: colors.textPrimary }]}>{label}</Text>
+        {hint ? <Text style={[field.hint, { color: colors.textMuted }]}>{hint}</Text> : null}
+      </View>
+      {children}
+    </View>
+  );
+}
 
-  fieldBlock: { marginTop: 14 },
-  label: { color: "#9BA3B4", marginBottom: 8, fontSize: 13 },
-  input: {
-    backgroundColor: "#151821",
-    borderColor: "#23283A",
+export default function EditEnvelope() {
+  const router = useRouter();
+  const { id } = useLocalSearchParams();
+  const { state, editEnvelope } = useBudget();
+  const { colors } = useTheme();
+  const s = makeStyles(colors);
+
+  const env = state.envelopes.find(e => e.id === id);
+
+  const [name, setName]                     = useState(env?.name ?? "");
+  const [type, setType]                     = useState(env?.type ?? "fixed");
+  const [targetBudget, setTargetBudget]     = useState(env?.target ? String(env.target) : "");
+  const [targetFrequency, setTargetFrequency] = useState(env?.targetFrequency ?? "monthly");
+  const [targetDate, setTargetDate]         = useState(env?.targetDate ?? "1");
+  const [rollover, setRollover]             = useState(env?.rollover ?? true);
+
+  useEffect(() => {
+    if (!env) {
+      Alert.alert("Not found", "This envelope no longer exists.");
+      router.back();
+    }
+  }, []);
+
+  if (!env) return null;
+
+  const capitalize = str => str.charAt(0).toUpperCase() + str.slice(1);
+
+  const onSave = () => {
+    if (!name.trim()) {
+      Alert.alert("Missing name", "Please enter an envelope name.");
+      return;
+    }
+    const targetNum = Number(targetBudget || 0);
+    if (isNaN(targetNum)) {
+      Alert.alert("Invalid target", "Target budget must be a number.");
+      return;
+    }
+    const dateNum = Number(targetDate || 1);
+    if (isNaN(dateNum) || dateNum < 1 || dateNum > 31) {
+      Alert.alert("Invalid date", "Target date must be between 1 and 31.");
+      return;
+    }
+
+    editEnvelope(id, {
+      name: name.trim(),
+      type,
+      rollover,
+      target: targetNum,
+      targetFrequency,
+      targetDate: String(dateNum),
+    });
+
+    router.back();
+  };
+
+  return (
+    <SafeAreaView style={s.screen}>
+      <ScrollView
+        contentContainerStyle={{ padding: spacing.lg, paddingBottom: 60, gap: spacing.lg }}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+
+        {/* Current balance info banner */}
+        <View style={[bal.wrap, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Text style={[bal.label, { color: colors.textSecondary }]}>Current balance</Text>
+          <Text style={[bal.value, { color: colors.textPrimary }]}>
+            ${(env.amount ?? 0).toFixed(2)}
+          </Text>
+          <Text style={[bal.note, { color: colors.textMuted }]}>
+            Balance is not affected by editing
+          </Text>
+        </View>
+
+        {/* ── Type selector ── */}
+        <View style={[typeCard.wrap, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <TouchableOpacity
+            style={[typeCard.half, type === "fixed" && { backgroundColor: colors.accent }]}
+            onPress={() => setType("fixed")}
+            activeOpacity={0.85}
+          >
+            <Text style={typeCard.icon}>🔒</Text>
+            <Text style={[typeCard.label, { color: type === "fixed" ? "#FFFFFF" : colors.textPrimary }]}>
+              Fixed
+            </Text>
+            <Text style={[typeCard.desc, { color: type === "fixed" ? "rgba(255,255,255,0.65)" : colors.textMuted }]}>
+              Must-pay bills{"\n"}& commitments
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[typeCard.half, type === "flexible" && { backgroundColor: colors.accent }]}
+            onPress={() => setType("flexible")}
+            activeOpacity={0.85}
+          >
+            <Text style={typeCard.icon}>🎯</Text>
+            <Text style={[typeCard.label, { color: type === "flexible" ? "#fff" : colors.textPrimary }]}>
+              Flexible
+            </Text>
+            <Text style={[typeCard.desc, { color: type === "flexible" ? "rgba(255,255,255,0.65)" : colors.textMuted }]}>
+              Variable spending{"\n"}& savings goals
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* ── Name ── */}
+        <Field label="Envelope name">
+          <TextInput
+            style={[s.input, { marginTop: spacing.xs }]}
+            placeholder="Name your envelope"
+            placeholderTextColor={colors.textMuted}
+            value={name}
+            onChangeText={setName}
+            returnKeyType="done"
+          />
+        </Field>
+
+        {/* ── Target budget ── */}
+        <Field label="Target budget" hint="per period — optional">
+          <TextInput
+            style={[s.input, { marginTop: spacing.xs }]}
+            placeholder="e.g. 1500.00"
+            placeholderTextColor={colors.textMuted}
+            keyboardType="decimal-pad"
+            value={targetBudget}
+            onChangeText={setTargetBudget}
+            returnKeyType="done"
+          />
+        </Field>
+
+        {/* ── Target frequency ── */}
+        <Field label="Budget frequency">
+          <View style={{ marginTop: spacing.xs }}>
+            <SegmentedControl
+              options={FREQUENCIES}
+              value={targetFrequency}
+              onChange={setTargetFrequency}
+              colors={colors}
+              labelFn={capitalize}
+            />
+          </View>
+        </Field>
+
+        {/* ── Target date ── */}
+        <Field label="Due date" hint="day of month (1–31)">
+          <TextInput
+            style={[s.input, { marginTop: spacing.xs }]}
+            placeholder="e.g. 22 for the 22nd"
+            placeholderTextColor={colors.textMuted}
+            keyboardType="number-pad"
+            value={String(targetDate)}
+            onChangeText={setTargetDate}
+            returnKeyType="done"
+          />
+        </Field>
+
+        {/* ── Rollover toggle ── */}
+        <View style={[roll.row, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={[roll.label, { color: colors.textPrimary }]}>Roll over unused funds</Text>
+            <Text style={[roll.sub, { color: colors.textSecondary }]}>
+              {rollover
+                ? "Leftover balance carries into the next cycle"
+                : "Balance resets to $0 at end of each cycle"}
+            </Text>
+          </View>
+          <Switch
+            value={rollover}
+            onValueChange={setRollover}
+            trackColor={{ false: colors.border, true: colors.accent }}
+            thumbColor="#fff"
+          />
+        </View>
+
+        {/* ── Actions ── */}
+        <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm }}>
+          <TouchableOpacity
+            style={[s.secondaryBtn, { flex: 1 }]}
+            onPress={() => router.back()}
+            activeOpacity={0.8}
+          >
+            <Text style={s.secondaryBtnText}>Cancel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[s.primaryBtn, { flex: 2 }]}
+            onPress={onSave}
+            activeOpacity={0.85}
+          >
+            <Text style={s.primaryBtnText}>Save changes</Text>
+          </TouchableOpacity>
+        </View>
+
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const typeCard = StyleSheet.create({
+  wrap: {
+    flexDirection: "row",
+    borderRadius: radius.xl,
     borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    color: "#fff",
-    fontSize: 16,
+    overflow: "hidden",
+    gap: 1,
   },
-  help: { color: "#9BA3B4", marginTop: 8, fontSize: 12 },
-
-  chipsRow: { flexDirection: "row", gap: 10, marginTop: 8 },
-  chip: {
-    borderColor: "#374151",
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: "#0E0F13",
-  },
-  chipActive: { backgroundColor: "#2563EB", borderColor: "#2563EB" },
-  chipText: { color: "#9BA3B4", fontWeight: "700" },
-  chipTextActive: { color: "#fff" },
-
-  actionsRow: { flexDirection: "row", gap: 10, marginTop: 24 },
-  cancelBtn: {
+  half: {
     flex: 1,
-    backgroundColor: "#374151",
-    borderRadius: 10,
-    paddingVertical: 14,
+    alignItems: "center",
+    padding: spacing.lg,
+    gap: spacing.xs,
+  },
+  icon: { fontSize: 28 },
+  label: { fontSize: typography.lg, fontWeight: typography.heavy },
+  desc: { fontSize: typography.xs, textAlign: "center", lineHeight: 16 },
+});
+
+const seg = StyleSheet.create({
+  wrap: {
+    flexDirection: "row",
+    borderRadius: radius.md,
+    borderWidth: 1,
+    overflow: "hidden",
+    padding: 3,
+    gap: 3,
+  },
+  item: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.sm,
     alignItems: "center",
   },
-  cancelText: { color: "#fff", fontWeight: "800" },
-  saveBtn: {
-    backgroundColor: "#2563EB",
-    borderRadius: 10,
-    paddingVertical: 14,
-    paddingHorizontal: 18,
-    alignItems: "center",
+  text: {
+    fontSize: typography.sm,
+    fontWeight: typography.semibold,
+    textTransform: "capitalize",
   },
-  saveText: { color: "#fff", fontWeight: "800" },
+});
+
+const field = StyleSheet.create({
+  wrap: { gap: 0 },
+  labelRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "baseline",
+    marginBottom: spacing.xs,
+  },
+  label: { fontSize: typography.md, fontWeight: typography.semibold },
+  hint: { fontSize: typography.xs },
+});
+
+const roll = StyleSheet.create({
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    padding: spacing.lg,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+  },
+  label: { fontSize: typography.md, fontWeight: typography.semibold, marginBottom: 2 },
+  sub: { fontSize: typography.sm, lineHeight: 18 },
+});
+
+const bal = StyleSheet.create({
+  wrap: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    padding: spacing.lg,
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  label: { fontSize: typography.xs, fontWeight: typography.medium, textTransform: "uppercase", letterSpacing: 0.6 },
+  value: { fontSize: typography.xxl, fontWeight: typography.heavy },
+  note: { fontSize: typography.xs },
 });

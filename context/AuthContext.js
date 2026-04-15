@@ -9,7 +9,7 @@ import React, {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const BASE_URL =
-  process.env.EXPO_PUBLIC_BANK_BACKEND_URL || "http://localhost:4000";
+  process.env.EXPO_PUBLIC_BANK_BACKEND_URL || "https://envelope-bank-backend.onrender.com";
 
 const AuthContext = createContext(null);
 

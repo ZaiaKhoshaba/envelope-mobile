@@ -1,444 +1,547 @@
 // app/envelopes.js
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
-  TouchableOpacity,
   ScrollView,
+  TouchableOpacity,
+  SafeAreaView,
   TextInput,
-  Modal,
   Alert,
+  Modal,
 } from "react-native";
+import { useRouter } from "expo-router";
 import { useBudget } from "../context/BudgetContext";
+import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
+import * as Haptics from "expo-haptics";
 
-export default function EnvelopesScreen() {
-  const { state, allocateToEnvelope, editEnvelope, deleteEnvelope, unallocated } =
-    useBudget();
+// ── Envelope card ─────────────────────────────────────────────────────────────
 
-  const [editingId, setEditingId] = useState(null);
-  const [editTarget, setEditTarget] = useState("");
-  const [editFreq, setEditFreq] = useState("monthly");
-  const [editDate, setEditDate] = useState(""); // YYYY-MM-DD
-  const [editName, setEditName] = useState("");
+function EnvelopeCard({ env, onAllocate, onEdit, onDelete, colors }) {
+  const [inputVal, setInputVal] = useState("");
+  const isFixed   = env.type === "fixed";
+  const accentCol = isFixed ? colors.fixed     : colors.flexible;
+  const accentBg  = isFixed ? colors.fixedBg   : colors.flexibleBg;
 
-  const envelopes = useMemo(() => state.envelopes || [], [state.envelopes]);
-
-  const onOpenEdit = (env) => {
-    setEditingId(env.id);
-    setEditName(env.name || "");
-    setEditTarget(
-      env.target != null && !Number.isNaN(Number(env.target))
-        ? String(env.target)
-        : ""
-    );
-    setEditFreq(env.targetFrequency || "monthly");
-    const d = env.targetDate ? String(env.targetDate) : "";
-    setEditDate(d ? d.slice(0, 10) : "");
-  };
-
-  const onCloseEdit = () => {
-    setEditingId(null);
-    setEditName("");
-    setEditTarget("");
-    setEditFreq("monthly");
-    setEditDate("");
-  };
-
-  const onSaveEdit = () => {
-    if (!editingId) return;
-
-    const updates = {};
-    if (editName.trim()) updates.name = editName.trim();
-    updates.target = Number(editTarget) || 0;
-    updates.targetFrequency = editFreq;
-
-    if (editDate.trim()) {
-      const d = new Date(editDate.trim());
-      if (Number.isNaN(d.getTime())) {
-        Alert.alert(
-          "Target Date",
-          "Please enter a valid date in YYYY-MM-DD format."
-        );
-        return;
-      }
-      updates.targetDate = d.toISOString();
-    } else {
-      updates.targetDate = "";
+  const handleAllocate = () => {
+    const n = parseFloat(inputVal);
+    if (isNaN(n) || n <= 0) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert("Invalid amount", "Please enter a positive number.");
+      return;
     }
-
-    editEnvelope(editingId, updates);
-    onCloseEdit();
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    onAllocate(env.id, n);
+    setInputVal("");
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Envelopes</Text>
+    <View style={[card.wrap, { backgroundColor: colors.card, borderColor: colors.border }]}>
 
-      {/* Show global Unallocated once at top, not per envelope */}
-      <Text style={styles.unallocTop}>
-        Unallocated: ${Number(unallocated || 0).toFixed(2)}
-      </Text>
-
-      <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-        {envelopes.length === 0 && (
-          <Text style={styles.empty}>No envelopes yet.</Text>
-        )}
-
-        {envelopes.map((e) => {
-          const target = Number(e.target || 0);
-          const showProgress = target > 0;
-          const pct = progressPct(Number(e.amount || 0), target);
-
-          return (
-            <View key={e.id} style={styles.card}>
-              <View style={styles.topRow}>
-                <Text style={styles.name}>{e.name}</Text>
-                <Text style={styles.balance}>
-                  ${Number(e.amount || 0).toFixed(2)}
-                </Text>
-              </View>
-
-              {/* Frequency + Days Left */}
-              <View style={styles.metaRow}>
-                <Text style={styles.meta}>
-                  {e.type || "fixed"}/{e.rollover ? "rollover" : "no-rollover"} •{" "}
-                  {e.targetFrequency || "monthly"}
-                </Text>
-                {e.targetDate ? (
-                  <Text style={styles.daysLeftText}>
-                    {daysLeftText(e.targetDate)}
-                  </Text>
-                ) : null}
-              </View>
-
-              {/* Progress bar (only if target > 0) */}
-              {showProgress && (
-                <View style={styles.progressBox}>
-                  <View style={styles.progressTrack}>
-                    <View
-                      style={[
-                        styles.progressFill,
-                        { width: `${pct}%` },
-                      ]}
-                    />
-                  </View>
-                  <Text style={styles.progressLabel}>
-                    ${Number(e.amount || 0).toFixed(2)} / $
-                    {Number(target).toFixed(2)}{" "}
-                    {e.targetDate ? `• due ${fmtDate(e.targetDate)}` : ""}
-                  </Text>
-                </View>
-              )}
-
-              {/* Actions */}
-              <View style={styles.actions}>
-                <TouchableOpacity
-                  style={styles.btn}
-                  onPress={() => onOpenEdit(e)}
-                >
-                  <Text style={styles.btnText}>Edit</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.btn, styles.btnDanger]}
-                  onPress={() =>
-                    Alert.alert(
-                      "Delete Envelope",
-                      `Delete "${e.name}"? Remaining funds will return to Unallocated.`,
-                      [
-                        { text: "Cancel", style: "cancel" },
-                        {
-                          text: "Delete",
-                          style: "destructive",
-                          onPress: () => deleteEnvelope(e.id),
-                        },
-                      ]
-                    )
-                  }
-                >
-                  <Text style={styles.btnText}>Delete</Text>
-                </TouchableOpacity>
-              </View>
-
-              {/* Quick allocate from Unallocated -> Envelope */}
-              <QuickAllocate envId={e.id} />
+      {/* Top row: name + amount */}
+      <View style={card.topRow}>
+        <View style={{ flex: 1 }}>
+          <View style={card.pills}>
+            <View style={[card.pill, { backgroundColor: accentBg }]}>
+              <Text style={[card.pillText, { color: accentCol }]}>
+                {isFixed ? "Fixed" : "Flexible"}
+              </Text>
             </View>
-          );
-        })}
-      </ScrollView>
-
-      {/* Edit Modal */}
-      <Modal
-        visible={!!editingId}
-        transparent
-        animationType="fade"
-        onRequestClose={onCloseEdit}
-      >
-        <View style={styles.backdrop}>
-          <View style={styles.sheet}>
-            <Text style={styles.sheetTitle}>Edit Envelope</Text>
-
-            <Text style={styles.label}>Name</Text>
-            <TextInput
-              style={styles.input}
-              value={editName}
-              onChangeText={setEditName}
-              placeholder="Name"
-              placeholderTextColor="#6B7280"
-            />
-
-            <Text style={styles.label}>Target Budget (optional)</Text>
-            <TextInput
-              style={styles.input}
-              value={editTarget}
-              onChangeText={setEditTarget}
-              keyboardType="decimal-pad"
-              placeholder="e.g. 400"
-              placeholderTextColor="#6B7280"
-            />
-
-            <Text style={styles.label}>Frequency</Text>
-            <Row>
-              {["weekly", "fortnightly", "monthly"].map((f) => (
-                <Chip
-                  key={f}
-                  active={editFreq === f}
-                  onPress={() => setEditFreq(f)}
-                >
-                  {f}
-                </Chip>
-              ))}
-            </Row>
-
-            <Text style={styles.label}>Target Date (YYYY-MM-DD)</Text>
-            <TextInput
-              style={styles.input}
-              value={editDate}
-              onChangeText={setEditDate}
-              placeholder="e.g. 2025-12-22"
-              placeholderTextColor="#6B7280"
-            />
-
-            <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
-              <TouchableOpacity
-                style={[styles.btn, { flex: 1 }]}
-                onPress={onSaveEdit}
-              >
-                <Text style={styles.btnText}>Save</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.btn, styles.btnSecondary, { flex: 1 }]}
-                onPress={onCloseEdit}
-              >
-                <Text style={styles.btnText}>Cancel</Text>
-              </TouchableOpacity>
-            </View>
+            {env.rollover && (
+              <View style={[card.pill, { backgroundColor: colors.successBg }]}>
+                <Text style={[card.pillText, { color: colors.success }]}>Rolls over</Text>
+              </View>
+            )}
           </View>
+          <Text style={[card.name, { color: colors.textPrimary }]} numberOfLines={1}>
+            {env.name}
+          </Text>
         </View>
-      </Modal>
-    </View>
-  );
-}
 
-/* Small components */
-function QuickAllocate({ envId }) {
-  const { allocateToEnvelope, unallocated } = useBudget();
-  const [amt, setAmt] = useState("");
+        <View style={{ alignItems: "flex-end" }}>
+          <Text style={[card.amountLabel, { color: colors.textSecondary }]}>Balance</Text>
+          <Text style={[card.amount, { color: env.amount <= 0 ? colors.danger : colors.textPrimary }]}>
+            ${env.amount.toFixed(2)}
+          </Text>
+          {env.target > 0 && (
+            <Text style={[card.targetLabel, { color: colors.textMuted }]}>
+              of ${Number(env.target).toFixed(2)} target
+            </Text>
+          )}
+        </View>
+      </View>
 
-  return (
-    <View style={styles.qaRow}>
-      <Text style={styles.qaHint}>
-        Unallocated: ${Number(unallocated || 0).toFixed(2)}
-      </Text>
-      <View style={{ flexDirection: "row", gap: 8 }}>
+      {/* Progress bar — shows % of target reached, or full bar if no target set */}
+      <View style={[card.track, { backgroundColor: colors.cardAlt }]}>
+        <View
+          style={[
+            card.fill,
+            {
+              width: env.target > 0
+                ? `${Math.min((env.amount / env.target) * 100, 100)}%`
+                : env.amount > 0 ? "100%" : "0%",
+              backgroundColor: env.amount <= 0 ? colors.danger : accentCol,
+              opacity: 0.75,
+            },
+          ]}
+        />
+      </View>
+
+      {/* Allocate row */}
+      <View style={card.allocateRow}>
         <TextInput
-          style={[styles.input, { flex: 1, paddingVertical: 8 }]}
-          value={amt}
-          onChangeText={setAmt}
+          style={[card.input, {
+            backgroundColor: colors.cardAlt,
+            borderColor: colors.border,
+            color: colors.textPrimary,
+            flex: 1,
+          }]}
+          placeholder="Allocate $"
+          placeholderTextColor={colors.textMuted}
           keyboardType="decimal-pad"
-          placeholder="Amount"
-          placeholderTextColor="#6B7280"
+          value={inputVal}
+          onChangeText={setInputVal}
+          returnKeyType="done"
+          onSubmitEditing={handleAllocate}
         />
         <TouchableOpacity
-          style={[styles.btn, { paddingVertical: 10 }]}
-          onPress={() => {
-            const n = Number(amt) || 0;
-            if (n <= 0) return;
-            allocateToEnvelope(envId, n);
-            setAmt("");
-          }}
+          style={[card.allocateBtn, { backgroundColor: colors.accent }]}
+          onPress={handleAllocate}
+          activeOpacity={0.8}
         >
-          <Text style={styles.btnText}>Allocate</Text>
+          <Text style={card.allocateBtnText}>Add</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Action row */}
+      <View style={card.actionRow}>
+        <TouchableOpacity
+          style={[card.actionBtn, { borderColor: colors.border, backgroundColor: colors.cardAlt }]}
+          onPress={() => onEdit(env)}
+          activeOpacity={0.75}
+        >
+          <Text style={[card.actionBtnText, { color: colors.textPrimary }]}>✏️  Edit</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[card.actionBtn, { borderColor: colors.danger, backgroundColor: colors.dangerBg }]}
+          onPress={() => onDelete(env.id, env.name)}
+          activeOpacity={0.75}
+        >
+          <Text style={[card.actionBtnText, { color: colors.danger }]}>🗑  Delete</Text>
         </TouchableOpacity>
       </View>
     </View>
   );
 }
 
-function Row({ children }) {
+// ── Delete confirm modal ──────────────────────────────────────────────────────
+
+function DeleteModal({ name, onCancel, onConfirm, colors }) {
   return (
-    <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
-      {children}
-    </View>
+    <Modal transparent animationType="fade" visible>
+      <View style={[del.backdrop, { backgroundColor: colors.overlay }]}>
+        <View style={[del.box, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Text style={[del.title, { color: colors.textPrimary }]}>Delete envelope?</Text>
+          <Text style={[del.body, { color: colors.textSecondary }]}>
+            <Text style={{ fontWeight: typography.bold, color: colors.textPrimary }}>{name}</Text>
+            {" "}will be removed and its balance returned to unallocated.
+          </Text>
+          <View style={del.btnRow}>
+            <TouchableOpacity
+              style={[del.btn, { backgroundColor: colors.cardAlt, borderColor: colors.border }]}
+              onPress={onCancel}
+              activeOpacity={0.8}
+            >
+              <Text style={[del.btnText, { color: colors.textPrimary }]}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[del.btn, { backgroundColor: colors.dangerBg, borderColor: colors.danger }]}
+              onPress={onConfirm}
+              activeOpacity={0.8}
+            >
+              <Text style={[del.btnText, { color: colors.danger }]}>Delete</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
-function Chip({ active, onPress, children }) {
+// ── Main screen ───────────────────────────────────────────────────────────────
+
+export default function Envelopes() {
+  const router = useRouter();
+  const { colors } = useTheme();
+
+  // ✅ Correct context values
+  const { state, allocateToEnvelope, deleteEnvelope, total, allocated, unallocated } = useBudget();
+  const s = makeStyles(colors);
+
+  const [filter, setFilter]     = useState("all");
+  const [delState, setDelState] = useState({ open: false, id: "", name: "" });
+
+  const envelopes = state?.envelopes ?? [];
+
+  const filtered = envelopes.filter(e => {
+    if (filter === "fixed")    return e.type === "fixed";
+    if (filter === "flexible") return e.type === "flexible";
+    return true;
+  });
+
+  // ✅ Uses unallocated directly from context — no manual recalculation
+  const handleAllocate = (envId, amount) => {
+    if (amount > unallocated) {
+      Alert.alert(
+        "Not enough unallocated",
+        `You only have $${unallocated.toFixed(2)} free to allocate.`
+      );
+      return;
+    }
+    allocateToEnvelope(envId, amount);
+  };
+
+  const handleEdit = (env) => {
+    router.push({ pathname: "/edit-envelope", params: { id: env.id } });
+  };
+
+  const handleDeleteConfirm = (id, name) => {
+    setDelState({ open: true, id, name });
+  };
+
+  const doDelete = () => {
+    deleteEnvelope(delState.id);
+    setDelState({ open: false, id: "", name: "" });
+  };
+
   return (
-    <TouchableOpacity
-      onPress={onPress}
-      style={[
-        {
-          paddingVertical: 8,
-          paddingHorizontal: 12,
-          borderRadius: 999,
-          borderWidth: 1,
-        },
-        active
-          ? { backgroundColor: "rgba(37,99,235,0.15)", borderColor: "#2563EB" }
-          : { backgroundColor: "#151821", borderColor: "#23283A" },
-      ]}
-    >
-      <Text
-        style={{
-          color: "#fff",
-          fontWeight: "700",
-          textTransform: "capitalize",
-        }}
+    <SafeAreaView style={s.screen}>
+
+      {/* ── Summary strip: Allocated / Unallocated / Total ── */}
+      <View style={[summ.strip, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+        <View style={summ.col}>
+          <Text style={[summ.label, { color: colors.textSecondary }]}>Allocated</Text>
+          <Text style={[summ.val, { color: colors.textPrimary }]}>
+            ${(allocated ?? 0).toFixed(2)}
+          </Text>
+        </View>
+
+        <View style={[summ.divider, { backgroundColor: colors.border }]} />
+
+        <View style={summ.col}>
+          <Text style={[summ.label, { color: colors.textSecondary }]}>Unallocated</Text>
+          <Text style={[summ.val, { color: unallocated <= 0 ? colors.danger : colors.success }]}>
+            ${(unallocated ?? 0).toFixed(2)}
+          </Text>
+        </View>
+
+        <View style={[summ.divider, { backgroundColor: colors.border }]} />
+
+        <View style={summ.col}>
+          <Text style={[summ.label, { color: colors.textSecondary }]}>Total</Text>
+          <Text style={[summ.val, { color: colors.textPrimary }]}>
+            ${(total ?? 0).toFixed(2)}
+          </Text>
+        </View>
+      </View>
+
+      {/* ── Filter tabs + New button ── */}
+      <View style={[filt.row, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+        {["all", "fixed", "flexible"].map(f => (
+          <TouchableOpacity
+            key={f}
+            style={[
+              filt.tab,
+              filter === f && { borderBottomColor: colors.accent, borderBottomWidth: 2 },
+            ]}
+            onPress={() => setFilter(f)}
+            activeOpacity={0.8}
+          >
+            <Text style={[filt.tabText, {
+              color:      filter === f ? colors.accent : colors.textSecondary,
+              fontWeight: filter === f ? typography.bold : typography.regular,
+            }]}>
+              {f.charAt(0).toUpperCase() + f.slice(1)}
+            </Text>
+          </TouchableOpacity>
+        ))}
+
+        <TouchableOpacity
+          style={[filt.addBtn, { backgroundColor: colors.accent }]}
+          onPress={() => router.push("/new-envelope")}
+          activeOpacity={0.8}
+        >
+          <Text style={filt.addBtnText}>+ New</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* ── Envelope list ── */}
+      <ScrollView
+        contentContainerStyle={{ padding: spacing.lg, paddingBottom: 40, gap: spacing.md }}
+        showsVerticalScrollIndicator={false}
       >
-        {children}
-      </Text>
-    </TouchableOpacity>
+        {filtered.length === 0 ? (
+          <View style={empty.wrap}>
+            <Text style={empty.icon}>✉️</Text>
+            <Text style={[empty.title, { color: colors.textPrimary }]}>No envelopes yet</Text>
+            <Text style={[empty.body, { color: colors.textSecondary }]}>
+              Create your first envelope to start organising your money.
+            </Text>
+            <TouchableOpacity
+              style={[s.primaryBtn, { marginTop: spacing.lg, paddingHorizontal: spacing.xl }]}
+              onPress={() => router.push("/new-envelope")}
+              activeOpacity={0.8}
+            >
+              <Text style={s.primaryBtnText}>Create envelope</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          filtered.map(env => (
+            <EnvelopeCard
+              key={env.id}
+              env={env}
+              colors={colors}
+              onAllocate={handleAllocate}
+              onEdit={handleEdit}
+              onDelete={handleDeleteConfirm}
+            />
+          ))
+        )}
+      </ScrollView>
+
+      {/* ── Delete confirm modal ── */}
+      {delState.open && (
+        <DeleteModal
+          name={delState.name}
+          colors={colors}
+          onCancel={() => setDelState({ open: false, id: "", name: "" })}
+          onConfirm={doDelete}
+        />
+      )}
+    </SafeAreaView>
   );
 }
 
-/* Utils */
-function progressPct(amount, target) {
-  if (!target || target <= 0) return 0;
-  return Math.max(0, Math.min(100, Math.round((amount / target) * 100)));
-}
+// ── Styles ────────────────────────────────────────────────────────────────────
 
-function daysLeftText(targetDateISO) {
-  if (!targetDateISO) return "";
-  const targetTs = new Date(targetDateISO).getTime();
-  if (Number.isNaN(targetTs)) return "";
-  const diffDays = Math.max(
-    0,
-    Math.ceil((targetTs - Date.now()) / (1000 * 60 * 60 * 24))
-  );
-  return `${diffDays} days left`;
-}
-
-function fmtDate(iso) {
-  try {
-    const d = new Date(iso);
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
-  } catch {
-    return "";
-  }
-}
-
-/* Styles */
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#0E0F13", padding: 16 },
-  title: {
-    color: "#fff",
-    fontSize: 20,
-    fontWeight: "800",
-    textAlign: "center",
-    marginBottom: 8,
-  },
-  unallocTop: {
-    color: "#9BA3B4",
-    fontSize: 12,
-    textAlign: "center",
-    marginBottom: 10,
-  },
-  empty: { color: "#9BA3B4", textAlign: "center", marginTop: 20 },
-
-  card: {
-    backgroundColor: "#151821",
-    borderRadius: 12,
-    padding: 12,
+const card = StyleSheet.create({
+  wrap: {
+    borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: "#23283A",
-    marginBottom: 10,
+    padding: spacing.lg,
+    gap: spacing.md,
   },
-
   topRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
+    alignItems: "flex-start",
+    gap: spacing.md,
   },
-  name: { color: "#fff", fontWeight: "800", fontSize: 16 },
-  balance: { color: "#4FD1C5", fontWeight: "800", fontSize: 16 },
-
-  metaRow: {
+  pills: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 6,
+    gap: spacing.xs,
+    marginBottom: spacing.xs,
   },
-  meta: { color: "#9BA3B4", fontSize: 12 },
-  daysLeftText: { color: "#9BA3B4", fontSize: 12 },
-
-  progressBox: { marginTop: 10 },
-  progressTrack: {
-    height: 8,
-    borderRadius: 6,
-    backgroundColor: "#23283A",
+  pill: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+  },
+  pillText: {
+    fontSize: typography.xs,
+    fontWeight: typography.bold,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  name: {
+    fontSize: typography.lg,
+    fontWeight: typography.heavy,
+  },
+  amountLabel: {
+    fontSize: typography.xs,
+    fontWeight: typography.medium,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+    marginBottom: 2,
+  },
+  amount: {
+    fontSize: typography.xl,
+    fontWeight: typography.heavy,
+  },
+  targetLabel: {
+    fontSize: typography.xs,
+    marginTop: 2,
+  },
+  track: {
+    height: 5,
+    borderRadius: radius.pill,
     overflow: "hidden",
   },
-  progressFill: { height: 8, backgroundColor: "#2563EB" },
-  progressLabel: { color: "#9BA3B4", fontSize: 12, marginTop: 6 },
-
-  actions: { marginTop: 12, flexDirection: "row", gap: 10 },
-  btn: {
-    backgroundColor: "#2563EB",
-    borderRadius: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+  fill: {
+    height: "100%",
+    borderRadius: radius.pill,
+  },
+  allocateRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#1f2937",
-  },
-  btnDanger: { backgroundColor: "#991B1B", borderColor: "#7F1D1D" },
-  btnSecondary: { backgroundColor: "#2A2F40", borderColor: "#23283A" },
-  btnText: { color: "#fff", fontWeight: "800" },
-
-  qaRow: { marginTop: 10 },
-  qaHint: { color: "#9BA3B4", fontSize: 12, marginBottom: 6 },
-
-  /* Modal */
-  backdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "center",
-    padding: 20,
-  },
-  sheet: {
-    backgroundColor: "#151821",
-    borderRadius: 14,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#23283A",
-  },
-  sheetTitle: { color: "#fff", fontSize: 18, fontWeight: "800", marginBottom: 8 },
-  label: {
-    color: "#9BA3B4",
-    fontSize: 12,
-    marginBottom: 6,
-    marginTop: 8,
   },
   input: {
-    backgroundColor: "#0E1017",
-    color: "#fff",
-    borderRadius: 10,
+    height: 44,
+    borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: "#23283A",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: spacing.md,
+    fontSize: typography.md,
+  },
+  allocateBtn: {
+    height: 44,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.md,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  allocateBtnText: {
+    color: "#fff",
+    fontWeight: typography.bold,
+    fontSize: typography.md,
+  },
+  actionRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+  actionBtn: {
+    flex: 1,
+    height: 38,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  actionBtnText: {
+    fontSize: typography.sm,
+    fontWeight: typography.semibold,
+  },
+});
+
+const summ = StyleSheet.create({
+  strip: {
+    flexDirection: "row",
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+  },
+  col: {
+    flex: 1,
+    alignItems: "center",
+  },
+  label: {
+    fontSize: typography.xs,
+    fontWeight: typography.medium,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: 2,
+  },
+  val: {
+    fontSize: typography.lg,
+    fontWeight: typography.heavy,
+  },
+  divider: {
+    width: 1,
+    marginVertical: spacing.xs,
+  },
+});
+
+const filt = StyleSheet.create({
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.lg,
+    borderBottomWidth: 1,
+    height: 48,
+    gap: spacing.sm,
+  },
+  tab: {
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderBottomWidth: 2,
+    borderBottomColor: "transparent",
+  },
+  tabText: {
+    fontSize: typography.sm,
+  },
+  addBtn: {
+    marginLeft: "auto",
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.pill,
+  },
+  addBtnText: {
+    color: "#fff",
+    fontSize: typography.sm,
+    fontWeight: typography.bold,
+  },
+});
+
+const del = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: spacing.xl,
+  },
+  box: {
+    width: "100%",
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    padding: spacing.xl,
+    gap: spacing.md,
+  },
+  title: {
+    fontSize: typography.xl,
+    fontWeight: typography.heavy,
+  },
+  body: {
+    fontSize: typography.md,
+    lineHeight: 22,
+  },
+  btnRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  btn: {
+    flex: 1,
+    height: 46,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  btnText: {
+    fontSize: typography.md,
+    fontWeight: typography.bold,
+  },
+});
+
+const empty = StyleSheet.create({
+  wrap: {
+    alignItems: "center",
+    paddingTop: 60,
+    paddingHorizontal: spacing.xl,
+  },
+  icon: {
+    fontSize: 48,
+    marginBottom: spacing.lg,
+  },
+  title: {
+    fontSize: typography.xl,
+    fontWeight: typography.heavy,
+    marginBottom: spacing.sm,
+    textAlign: "center",
+  },
+  body: {
+    fontSize: typography.md,
+    textAlign: "center",
+    lineHeight: 22,
   },
 });

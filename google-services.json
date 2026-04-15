@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "782812689834",
+    "project_id": "envelope-mobile",
+    "storage_bucket": "envelope-mobile.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:782812689834:android:6c928ba09ec8e8f59767d3",
+        "android_client_info": {
+          "package_name": "com.anonymous.envelopemobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBBDAbj2m6RLEH3spUhXQQMAf4aKGgIB2Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
