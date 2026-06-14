@@ -95,7 +95,7 @@ export default function PaywallScreen() {
 
         {/* ── Headline ── */}
         <Text style={[pw.title, { color: colors.textPrimary }]}>
-          Continue with Envelopes
+          Continue with Tend
         </Text>
         <Text style={[pw.subtitle, { color: colors.textSecondary }]}>
           Your free trial has ended. Subscribe to keep budgeting.

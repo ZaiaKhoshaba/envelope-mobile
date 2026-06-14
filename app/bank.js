@@ -3,6 +3,7 @@ import React, { useEffect, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert } from "react-native";
 import { bankListNew, bankMarkImported, bankGenerate } from "../lib/api";
 import { useBudget } from "../context/BudgetContext";
+import { fmt } from "../lib/format";
 
 export default function BankScreen() {
   const { startPendingSpend, state } = useBudget();
@@ -71,7 +72,7 @@ export default function BankScreen() {
             <View key={t.id} style={styles.card}>
               <View style={styles.rowTop}>
                 <Text style={styles.merchant}>{t.merchant || "Unknown"}</Text>
-                <Text style={styles.amount}>-${Number(t.amount).toFixed(2)}</Text>
+                <Text style={styles.amount}>-${fmt(Number(t.amount))}</Text>
               </View>
               <View style={{ marginTop: 8, flexDirection: "row", gap: 10 }}>
                 <TouchableOpacity style={styles.blueBtn} onPress={() => onImport(t)}>

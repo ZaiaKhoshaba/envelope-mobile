@@ -9,7 +9,7 @@
       "client_info": {
         "mobilesdk_app_id": "1:782812689834:android:6c928ba09ec8e8f59767d3",
         "android_client_info": {
-          "package_name": "com.anonymous.envelopemobile"
+          "package_name": "app.tend.budget"
         }
       },
       "oauth_client": [],

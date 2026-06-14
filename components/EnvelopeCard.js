@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { View, Text, TextInput, Pressable, StyleSheet } from "react-native";
 import { colors } from "../theme/tokens";
+import { fmt } from "../lib/format";
 
 export default function EnvelopeCard({ env, onAllocate, onEdit, onDelete }) {
   const [val, setVal] = useState("");
@@ -10,11 +11,11 @@ export default function EnvelopeCard({ env, onAllocate, onEdit, onDelete }) {
       <View style={styles.top}>
         <View>
           <Text style={styles.meta}>{env.type.toUpperCase()}</Text>
-          <Text style={styles.name}>{env.name}</Text>
+          <Text style={styles.name}>{env.emoji ? `${env.emoji}  ` : ""}{env.name}</Text>
         </View>
         <View style={{ alignItems: "flex-end" }}>
           <Text style={styles.meta}>Allocated</Text>
-          <Text style={styles.amount}>${env.amount.toFixed(2)}</Text>
+          <Text style={styles.amount}>${fmt(env.amount)}</Text>
         </View>
       </View>
 

@@ -1,5 +1,5 @@
 // app/_layout.js
-import React from "react";
+import React, { useState, useRef } from "react";
 import {
   Modal,
   View,
@@ -8,18 +8,22 @@ import {
   StyleSheet,
   ScrollView,
   Alert,
+  Animated,
 } from "react-native";
-import { Tabs } from "expo-router";
+import { Tabs, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { AuthProvider } from "../context/AuthContext";
+import { AuthProvider, useAuth } from "../context/AuthContext";
 import { BudgetProvider, useBudget } from "../context/BudgetContext";
 import { PurchaseProvider, usePurchase } from "../context/PurchaseContext";
 import { ThemeProvider, useTheme, spacing, radius, typography } from "../theme";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { usePushNotifications } from "../lib/notifications";
-import PaywallScreen from "../components/PaywallScreen";
+import { useIdleReminder } from "../lib/idleNotifications";
+import PinPad from "../components/PinPad";
+import { fmt } from "../lib/format";
 
 // ── Spend Chooser Modal ───────────────────────────────────────────────────────
 
@@ -41,7 +45,7 @@ function SpendChooserModal() {
       if (still > 0) {
         Alert.alert(
           "Shortfall",
-          `That source only covered $${(remainingBefore - still).toFixed(2)}.\nYou still need $${still.toFixed(2)}. Choose another source.`,
+          `That source only covered $${fmt(remainingBefore - still)}.\nYou still need $${fmt(still)}. Choose another source.`,
           [{ text: "OK" }]
         );
       }
@@ -59,7 +63,7 @@ function SpendChooserModal() {
 
           <View style={[modal.chip, { backgroundColor: colors.accentSoft }]}>
             <Text style={[modal.chipText, { color: colors.accent }]}>
-              Remaining to allocate: ${ps.remaining.toFixed(2)}
+              Remaining to allocate: ${fmt(ps.remaining)}
             </Text>
           </View>
 
@@ -72,7 +76,7 @@ function SpendChooserModal() {
               <View style={{ flex: 1 }}>
                 <Text style={[modal.envName, { color: colors.textPrimary }]}>Unallocated funds</Text>
                 <Text style={[modal.envMeta, { color: colors.textSecondary }]}>
-                  Available: ${unallocated.toFixed(2)}
+                  Available: ${fmt(unallocated)}
                 </Text>
               </View>
               <View style={[modal.usePill, { backgroundColor: colors.accentSoft }]}>
@@ -90,7 +94,7 @@ function SpendChooserModal() {
                 <View style={{ flex: 1 }}>
                   <Text style={[modal.envName, { color: colors.textPrimary }]}>{e.name}</Text>
                   <Text style={[modal.envMeta, { color: colors.textSecondary }]}>
-                    ${e.amount.toFixed(2)} • {e.type === "fixed" ? "Fixed" : "Flexible"} •{" "}
+                    ${fmt(e.amount)} • {e.type === "fixed" ? "Fixed" : e.type === "savings" ? "Savings" : "Flexible"} •{" "}
                     {e.rollover ? "Rolls over" : "Resets"}
                   </Text>
                 </View>
@@ -114,19 +118,136 @@ function SpendChooserModal() {
   );
 }
 
+// ── PIN lock modal ────────────────────────────────────────────────────────────
+
+const PIN_LENGTH = 4;
+
+function PinLockModal() {
+  const { isLocked, verifyPin, unlock, logout } = useAuth();
+  const router = useRouter();
+  const { colors } = useTheme();
+
+  const [current,  setCurrent]  = useState("");
+  const [errMsg,   setErrMsg]   = useState("");
+  const shakeAnim = useRef(new Animated.Value(0)).current;
+
+  const shake = () => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    Animated.sequence([
+      Animated.timing(shakeAnim, { toValue: 10,  duration: 60,  useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -10, duration: 60,  useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 6,   duration: 50,  useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -6,  duration: 50,  useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 0,   duration: 40,  useNativeDriver: true }),
+    ]).start();
+  };
+
+  const handleKey = async (key) => {
+    if (key === "del") {
+      setCurrent(v => v.slice(0, -1));
+      setErrMsg("");
+      return;
+    }
+    const next = current + key;
+    if (next.length > PIN_LENGTH) return;
+    setCurrent(next);
+    setErrMsg("");
+
+    if (next.length === PIN_LENGTH) {
+      setTimeout(async () => {
+        const ok = await verifyPin(next);
+        if (ok) {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          unlock();
+          setCurrent("");
+        } else {
+          shake();
+          setCurrent("");
+          setErrMsg("Incorrect PIN");
+        }
+      }, 120);
+    }
+  };
+
+  if (!isLocked) return null;
+
+  const dots = Array.from({ length: PIN_LENGTH }).map((_, i) => ({
+    filled: i < current.length,
+  }));
+
+  return (
+    <Modal transparent animationType="fade" visible statusBarTranslucent>
+      <View style={[lock.backdrop, { backgroundColor: colors.bg }]}>
+        <View style={lock.inner}>
+
+          <View style={[lock.iconWrap, { backgroundColor: colors.accentSoft }]}>
+            <Text style={lock.icon}>🔐</Text>
+          </View>
+
+          <Text style={[lock.title, { color: colors.textPrimary }]}>Enter your PIN</Text>
+          <Text style={[lock.subtitle, { color: colors.textSecondary }]}>
+            App was in background for a while
+          </Text>
+
+          <Animated.View style={[lock.dotsRow, { transform: [{ translateX: shakeAnim }] }]}>
+            {dots.map((d, i) => (
+              <View
+                key={i}
+                style={[
+                  lock.dot,
+                  {
+                    backgroundColor: d.filled ? colors.accent : "transparent",
+                    borderColor: d.filled ? colors.accent : colors.border,
+                  },
+                ]}
+              />
+            ))}
+          </Animated.View>
+
+          {!!errMsg && (
+            <Text style={[lock.errText, { color: colors.danger }]}>{errMsg}</Text>
+          )}
+
+          <PinPad onKey={handleKey} colors={colors} />
+
+          <TouchableOpacity
+            style={[lock.logoutBtn, { borderColor: colors.border }]}
+            onPress={() => {
+              Alert.alert(
+                "Log out",
+                "You'll need to sign in again to access the app.",
+                [
+                  { text: "Cancel", style: "cancel" },
+                  {
+                    text: "Log out",
+                    style: "destructive",
+                    onPress: async () => {
+                      await logout();
+                      router.replace("/login");
+                    },
+                  },
+                ]
+              );
+            }}
+            activeOpacity={0.7}
+          >
+            <Text style={[lock.logoutText, { color: colors.textMuted }]}>Log out</Text>
+          </TouchableOpacity>
+
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 // ── Inner layout ──────────────────────────────────────────────────────────────
 
 function InnerLayout() {
   const { colors, isDark } = useTheme();
-  const { isActive, isLoading } = usePurchase();
+  const insets = useSafeAreaInsets();
 
   usePushNotifications();
-
-  // Show nothing while we're checking the trial/subscription status
-  if (isLoading) return null;
-
-  // Trial expired and not subscribed — replace the whole app with the paywall
-  if (!isActive) return <PaywallScreen />;
+  useIdleReminder();
 
   return (
     <>
@@ -145,8 +266,8 @@ function InnerLayout() {
             backgroundColor: colors.card,
             borderTopColor:  colors.border,
             borderTopWidth:  1,
-            height:          64,
-            paddingBottom:   10,
+            height:          64 + insets.bottom,
+            paddingBottom:   10 + insets.bottom,
             paddingTop:      8,
           },
           tabBarActiveTintColor:   colors.accent,
@@ -194,22 +315,29 @@ function InnerLayout() {
           }}
         />
 
-        {/* Hidden from tab bar */}
-        <Tabs.Screen name="add-income"      options={{ href: null }} />
-        <Tabs.Screen name="bank-connect"    options={{ href: null }} />
-        <Tabs.Screen name="bank"            options={{ href: null }} />
-        <Tabs.Screen name="cycle"           options={{ href: null }} />
-        <Tabs.Screen name="edit-envelope"   options={{ href: null }} />
-        <Tabs.Screen name="income-schedule" options={{ href: null }} />
-        <Tabs.Screen name="login"           options={{ href: null }} />
-        <Tabs.Screen name="modal"           options={{ href: null }} />
-        <Tabs.Screen name="new-envelope"    options={{ href: null }} />
-        <Tabs.Screen name="register"        options={{ href: null }} />
-        <Tabs.Screen name="onboarding"      options={{ href: null }} />
-        <Tabs.Screen name="bank/callback"   options={{ href: null }} />
+        {/* Hidden from tab bar — no chrome at all on auth/onboarding screens */}
+        <Tabs.Screen name="login"           options={{ href: null, tabBarStyle: { display: "none" }, headerShown: false }} />
+        <Tabs.Screen name="register"        options={{ href: null, tabBarStyle: { display: "none" }, headerShown: false }} />
+        <Tabs.Screen name="onboarding"      options={{ href: null, tabBarStyle: { display: "none" }, headerShown: false }} />
+
+        {/* Hidden from tab bar — standard chrome */}
+        <Tabs.Screen name="add-income"      options={{ href: null, title: "Add Income" }} />
+        <Tabs.Screen name="add-spend"       options={{ href: null, title: "Add Spend" }} />
+        <Tabs.Screen name="bank-connect"    options={{ href: null, headerShown: false }} />
+        <Tabs.Screen name="bank"            options={{ href: null, headerShown: false }} />
+        <Tabs.Screen name="cycle"           options={{ href: null, title: "Budget Cycle" }} />
+        <Tabs.Screen name="edit-envelope"     options={{ href: null, title: "Edit Envelope" }} />
+        <Tabs.Screen name="envelope-detail"  options={{ href: null, title: "Envelope" }} />
+        <Tabs.Screen name="income-schedule" options={{ href: null, title: "Income Schedule" }} />
+        <Tabs.Screen name="modal"           options={{ href: null, headerShown: false }} />
+        <Tabs.Screen name="new-envelope"    options={{ href: null, title: "New Envelope" }} />
+        <Tabs.Screen name="transfer"        options={{ href: null, title: "Transfer Funds" }} />
+        <Tabs.Screen name="pin-setup"       options={{ href: null, title: "Set Up PIN", tabBarStyle: { display: "none" } }} />
+        <Tabs.Screen name="bank/callback"   options={{ href: null, headerShown: false }} />
       </Tabs>
 
       <SpendChooserModal />
+      <PinLockModal />
     </>
   );
 }
@@ -229,6 +357,67 @@ export default function Layout() {
     </ThemeProvider>
   );
 }
+
+// ── Lock modal styles ─────────────────────────────────────────────────────────
+
+const lock = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  inner: {
+    alignItems: "center",
+    gap: spacing.xl,
+    paddingHorizontal: spacing.xl,
+    paddingBottom: spacing.xxl,
+    width: "100%",
+  },
+  iconWrap: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  icon: { fontSize: 44 },
+  title: {
+    fontSize: typography.xxl,
+    fontWeight: typography.heavy,
+    textAlign: "center",
+  },
+  subtitle: {
+    fontSize: typography.md,
+    textAlign: "center",
+    marginTop: -spacing.md,
+  },
+  dotsRow: {
+    flexDirection: "row",
+    gap: spacing.lg,
+  },
+  dot: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+  },
+  errText: {
+    fontSize: typography.sm,
+    fontWeight: typography.medium,
+    marginTop: -spacing.sm,
+  },
+  logoutBtn: {
+    marginTop: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.xl,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+  },
+  logoutText: {
+    fontSize: typography.sm,
+    fontWeight: typography.medium,
+  },
+});
 
 // ── Modal styles ──────────────────────────────────────────────────────────────
 

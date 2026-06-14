@@ -1,7 +1,8 @@
 {
   "cli": {
     "version": ">= 16.24.1",
-    "appVersionSource": "remote"
+    "appVersionSource": "remote",
+    "promptToConfigurePushNotifications": false
   },
   "build": {
     "development": {
@@ -10,18 +11,41 @@
     },
     "preview": {
       "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "ios": {
+        "simulator": false,
+        "distribution": "store"
+      },
       "env": {
         "EXPO_PUBLIC_BANK_BACKEND_URL": "https://envelope-bank-backend.onrender.com"
       }
     },
     "production": {
       "autoIncrement": true,
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "ios": {
+        "buildConfiguration": "Release"
+      },
       "env": {
         "EXPO_PUBLIC_BANK_BACKEND_URL": "https://envelope-bank-backend.onrender.com"
       }
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "android": {
+        "serviceAccountKeyPath": "./google-play-service-account.json",
+        "track": "internal",
+        "releaseStatus": "draft"
+      },
+      "ios": {
+        "ascAppId": "6768997089",
+        "appleTeamId": "MR53VD52CX"
+      }
+    }
   }
 }

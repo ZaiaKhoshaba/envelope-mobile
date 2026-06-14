@@ -9,6 +9,7 @@ import React, {
 } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuth } from "./AuthContext";
+import { fmt } from "../lib/format";
 
 const BudgetContext = createContext(null);
 
@@ -56,6 +57,9 @@ function reducer(state, action) {
               env.targetDate !== undefined && env.targetDate !== null
                 ? String(env.targetDate)
                 : "",
+            contributionAmount: Number(env.contributionAmount || 0),
+            contributionPct:    Number(env.contributionPct    || 0),
+            goalAmount:         env.goalAmount != null ? Number(env.goalAmount) : null,
           }))
         : state.envelopes;
 
@@ -76,6 +80,8 @@ function reducer(state, action) {
       const normalised = {
         id: e.id,
         name: e.name || "",
+        emoji: e.emoji || "",
+        notes: e.notes || null,
         amount: Number(e.amount || 0),
         type: e.type || "fixed",
         rollover: !!e.rollover,
@@ -91,6 +97,9 @@ function reducer(state, action) {
           : e.date
           ? String(e.date)
           : "",
+        contributionAmount: Number(e.contributionAmount || 0),
+        contributionPct:    Number(e.contributionPct    || 0),
+        goalAmount:         e.goalAmount != null ? Number(e.goalAmount) : null,
       };
       return {
         ...state,
@@ -122,6 +131,11 @@ function reducer(state, action) {
                   action.updates.targetFrequency !== undefined
                     ? action.updates.targetFrequency
                     : e.targetFrequency,
+                contributionAmount: action.updates.contributionAmount != null ? Number(action.updates.contributionAmount) : e.contributionAmount,
+                contributionPct:    action.updates.contributionPct    != null ? Number(action.updates.contributionPct)    : e.contributionPct,
+                goalAmount:         action.updates.goalAmount !== undefined
+                  ? (action.updates.goalAmount != null ? Number(action.updates.goalAmount) : null)
+                  : e.goalAmount,
               }
             : e
         ),
@@ -195,81 +209,63 @@ function reducer(state, action) {
 }
 
 /* -----------------------------------------------------------
-   HELPER: approx # of pays left between now & target
+   HELPER: proportional auto-allocation
+   Every pay is split across fixed envelopes by:
+     envelope.target / totalFixedTarget
+   Each envelope is capped at its own target (won't over-fill).
+   Any surplus beyond targets stays as unallocated funds.
 ----------------------------------------------------------- */
-function countPaysRemaining(nowISO, targetISO, incomeSchedule) {
-  const now = new Date(nowISO);
-  const target = new Date(targetISO);
-  if (Number.isNaN(now.getTime()) || Number.isNaN(target.getTime())) return 1;
-  if (target <= now) return 1;
+export function buildProportionalPlans(incomeAmount, envelopes) {
+  // ── Fixed envelopes: proportional fill to target (capped at remaining need) ─
+  const fixedEnvs   = envelopes.filter(e => e.type === "fixed" && Number(e.target) > 0);
+  const totalTarget = fixedEnvs.reduce((sum, e) => sum + Number(e.target), 0);
 
-  const diffDays = Math.ceil(
-    (target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
-  );
+  const fixedPlans = (totalTarget && incomeAmount)
+    ? fixedEnvs.map(env => {
+        const proportion = Number(env.target) / totalTarget;
+        const gross      = incomeAmount * proportion;
+        const stillNeeds = Math.max(0, Number(env.target) - Number(env.amount || 0));
+        const allocation = Math.min(gross, stillNeeds);
+        return { envId: env.id, proportion, gross, allocation, isSavings: false };
+      }).filter(p => p.allocation > 0.004)
+    : [];
 
-  const freq = incomeSchedule?.frequency;
-  if (freq === "weekly") return Math.max(1, Math.ceil(diffDays / 7));
-  if (freq === "fortnightly") return Math.max(1, Math.ceil(diffDays / 14));
-  if (freq === "monthly") return Math.max(1, Math.ceil(diffDays / 30));
-  return 1;
+  // ── Savings envelopes: flat contribution added on top of existing balance ──
+  const savingsEnvs  = envelopes.filter(e => e.type === "savings");
+  const savingsPlans = incomeAmount
+    ? savingsEnvs.map(env => {
+        const pct = Number(env.contributionPct    || 0);
+        const amt = Number(env.contributionAmount || 0);
+        let allocation = 0;
+        if (pct > 0)      allocation = Math.round(incomeAmount * (pct / 100) * 100) / 100;
+        else if (amt > 0) allocation = amt;
+        return { envId: env.id, proportion: pct / 100, gross: allocation, allocation, isSavings: true };
+      }).filter(p => p.allocation > 0.004)
+    : [];
+
+  return [...fixedPlans, ...savingsPlans];
 }
 
-/* -----------------------------------------------------------
-   HELPER: auto-allocate this income across targeted envelopes
------------------------------------------------------------ */
-function autoAllocateIncome({ incomeAmount, nowISO, envelopes, incomeSchedule }) {
+function autoAllocateIncome({ incomeAmount, envelopes }) {
   if (!incomeAmount || incomeAmount <= 0) {
-    return { envelopes, plans: [], shortfall: 0 };
+    return { envelopes, shortfall: 0 };
   }
 
-  const now = nowISO || new Date().toISOString();
+  const plans = buildProportionalPlans(incomeAmount, envelopes);
+  if (plans.length === 0) return { envelopes, shortfall: 0 };
 
-  const plans = [];
-  for (const env of envelopes) {
-    const target = Number(env.target || 0);
-    if (!target) continue;
-
-    const current = Number(env.amount || 0);
-    const remainingNeeded = Math.max(0, target - current);
-    if (remainingNeeded <= 0) continue;
-
-    let paysRemaining = 1;
-    if (env.targetDate) {
-      paysRemaining = countPaysRemaining(now, env.targetDate, incomeSchedule);
-    }
-
-    const allocThisPay = remainingNeeded / paysRemaining;
-    if (allocThisPay > 0) {
-      plans.push({ envId: env.id, amount: allocThisPay });
-    }
-  }
-
-  if (plans.length === 0) {
-    return { envelopes, plans: [], shortfall: 0 };
-  }
-
-  const plannedTotal = plans.reduce((sum, p) => sum + p.amount, 0);
-
-  let scale = 1;
-  let shortfall = 0;
-  if (plannedTotal > incomeAmount) {
-    scale = incomeAmount / plannedTotal;
-    shortfall = plannedTotal - incomeAmount;
-  }
-
-  const allocationsById = new Map();
-  for (const p of plans) {
-    const amt = p.amount * scale;
-    allocationsById.set(p.envId, (allocationsById.get(p.envId) || 0) + amt);
-  }
-
-  const updatedEnvelopes = envelopes.map((env) => {
-    const extra = allocationsById.get(env.id) || 0;
-    if (!extra) return env;
-    return { ...env, amount: (Number(env.amount) || 0) + extra };
+  const updatedEnvelopes = envelopes.map(env => {
+    const plan = plans.find(p => p.envId === env.id);
+    if (!plan) return env;
+    return { ...env, amount: Math.round(((Number(env.amount) || 0) + plan.allocation) * 100) / 100 };
   });
 
-  return { envelopes: updatedEnvelopes, plans, shortfall };
+  // shortfall = total still needed across all fixed envelopes after this pay
+  const shortfall = updatedEnvelopes
+    .filter(e => e.type === "fixed" && Number(e.target) > 0)
+    .reduce((sum, e) => sum + Math.max(0, Number(e.target) - Number(e.amount)), 0);
+
+  return { envelopes: updatedEnvelopes, shortfall: Math.round(shortfall * 100) / 100 };
 }
 
 /* -----------------------------------------------------------
@@ -377,9 +373,7 @@ export function BudgetProvider({ children }) {
 
       const { envelopes: updatedEnvelopes, shortfall } = autoAllocateIncome({
         incomeAmount: amount,
-        nowISO: postedAt,
         envelopes: state.envelopes,
-        incomeSchedule: state.incomeSchedule,
       });
 
       dispatch({
@@ -455,6 +449,10 @@ export function BudgetProvider({ children }) {
     dispatch({ type: "DELETE_ENVELOPE", id });
   }, []);
 
+  const reorderEnvelopes = useCallback((newOrder) => {
+    dispatch({ type: "SET_ENVELOPES", envelopes: newOrder });
+  }, []);
+
   // editEnvelope(id, updates) — matches envelopes.js usage
   const editEnvelope = useCallback((id, updates) => {
     dispatch({ type: "UPDATE_ENVELOPE", id, updates });
@@ -463,6 +461,52 @@ export function BudgetProvider({ children }) {
   const addEnvelope = useCallback((envelope) => {
     dispatch({ type: "ADD_ENVELOPE", envelope });
   }, []);
+
+  // transferBetweenEnvelopes — move funds from one envelope to another
+  const transferBetweenEnvelopes = useCallback((fromId, toId, amount) => {
+    const amt = Math.round(Number(amount) * 100) / 100;
+    if (!amt || amt <= 0) return { ok: false, message: "Invalid amount" };
+    if (fromId === toId) return { ok: false, message: "Cannot transfer to the same envelope" };
+
+    const from = state.envelopes.find(e => e.id === fromId);
+    const to   = state.envelopes.find(e => e.id === toId);
+    if (!from || !to) return { ok: false, message: "Envelope not found" };
+    if (Number(from.amount) < amt) return { ok: false, message: "Insufficient balance" };
+
+    const updated = state.envelopes.map(e => {
+      if (e.id === fromId) return { ...e, amount: Math.round((Number(e.amount) - amt) * 100) / 100 };
+      if (e.id === toId)   return { ...e, amount: Math.round((Number(e.amount) + amt) * 100) / 100 };
+      return e;
+    });
+
+    dispatch({ type: "SET_ENVELOPES", envelopes: updated });
+    return { ok: true };
+  }, [state.envelopes]);
+
+  const addSpend = useCallback(
+    (amountArg, merchantArg, dateArg) => {
+      const amount = Math.abs(Number(amountArg || 0));
+      if (!amount || Number.isNaN(amount)) {
+        return { ok: false, message: "Invalid spend amount" };
+      }
+
+      const tx = {
+        id:          `spend_${Date.now()}`,
+        kind:        "spend",
+        amount:      -amount,           // stored as negative
+        merchant:    merchantArg?.trim() || "Manual spend",
+        description: merchantArg?.trim() || "Manual spend",
+        imported:    false,
+        postedAt:    dateArg || new Date().toISOString(),
+        allocations: [],
+        allocated:   false,
+      };
+
+      dispatch({ type: "ADD_TRANSACTION", tx });
+      return { ok: true, tx };
+    },
+    [dispatch]
+  );
 
   const simulateRandomSpend = useCallback(() => {
     if (state.envelopes.length === 0) {
@@ -488,7 +532,7 @@ export function BudgetProvider({ children }) {
     return {
       ok: true,
       tx,
-      message: `Spent $${spendAmt.toFixed(2)} at ${pick.name}`,
+      message: `Spent $${fmt(spendAmt)} at ${pick.name}`,
     };
   }, [state.envelopes]);
 
@@ -733,11 +777,14 @@ export function BudgetProvider({ children }) {
 
       addEnvelope,
       addIncome,
+      addSpend,
       allocateToEnvelope,
       allocateOutstanding,
       deleteEnvelope,
+      reorderEnvelopes,
       editEnvelope,
       setIncomeSchedule,
+      transferBetweenEnvelopes,
       resetAll,
 
       total: state.total,
@@ -756,11 +803,14 @@ export function BudgetProvider({ children }) {
       state,
       addEnvelope,
       addIncome,
+      addSpend,
       allocateToEnvelope,
       allocateOutstanding,
       deleteEnvelope,
+      reorderEnvelopes,
       editEnvelope,
       setIncomeSchedule,
+      transferBetweenEnvelopes,
       resetAll,
       simulateRandomSpend,
       importBankTransactions,

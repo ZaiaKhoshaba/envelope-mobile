@@ -11,9 +11,10 @@ import {
   Alert,
 } from "react-native";
 import { useRouter } from "expo-router";
+import { Linking } from "react-native";
 import { useBudget } from "../context/BudgetContext";
 import { useAuth } from "../context/AuthContext";
-import { usePurchase, TRIAL_DAYS } from "../context/PurchaseContext";
+import { usePurchase } from "../context/PurchaseContext";
 import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
 
 const DEV_UNLOCK_TAPS = 5;
@@ -102,13 +103,11 @@ function ChevronRow({ label, subtitle, value, onPress, colors, last }) {
 export default function Settings() {
   const router = useRouter();
   const { colors, isDark, toggle } = useTheme();
-  const { state, resetAll, setIncomeSchedule, simulateRandomSpend } = useBudget();
-  const { logout, user } = useAuth();
-  const { isSubscribed, daysRemaining, purchase } = usePurchase();
+  const { resetAll, simulateRandomSpend } = useBudget();
+  const { logout, user, pinEnabled, disablePin } = useAuth();
+  const { devForceFree, toggleDevForceFree } = usePurchase();
   const s = makeStyles(colors);
 
-  const cycle    = state?.cycle ?? "monthly";
-  const schedule = state?.incomeSchedule ?? {};
 
   // ── Developer mode (5-tap unlock on version row) ──
   const [devTapCount, setDevTapCount] = useState(0);
@@ -131,31 +130,6 @@ export default function Settings() {
     setDevModeOn(false);
     setDevTapCount(0);
     Alert.alert("Developer mode disabled");
-  };
-
-  const cycleOptions     = ["weekly", "fortnightly", "monthly"];
-  const frequencyOptions = ["weekly", "fortnightly", "monthly"];
-
-  const handleCycleChange = () => {
-    Alert.alert(
-      "Budget cycle",
-      "How often do you want to reset your budget?",
-      cycleOptions.map(opt => ({
-        text: opt.charAt(0).toUpperCase() + opt.slice(1),
-        onPress: () => {},
-      })).concat([{ text: "Cancel", style: "cancel" }])
-    );
-  };
-
-  const handleFrequencyChange = () => {
-    Alert.alert(
-      "Pay frequency",
-      "How often do you get paid?",
-      frequencyOptions.map(opt => ({
-        text: opt.charAt(0).toUpperCase() + opt.slice(1),
-        onPress: () => setIncomeSchedule({ frequency: opt }),
-      })).concat([{ text: "Cancel", style: "cancel" }])
-    );
   };
 
   const handleResetAll = () => {
@@ -185,18 +159,14 @@ export default function Settings() {
         {
           text: "Log out",
           style: "destructive",
-          onPress: () => {
-            logout();
+          onPress: async () => {
+            await logout();
             router.replace("/login");
           },
         },
       ]
     );
   };
-
-  const freqLabel = schedule.frequency
-    ? schedule.frequency.charAt(0).toUpperCase() + schedule.frequency.slice(1)
-    : "Not set";
 
   return (
     <SafeAreaView style={s.screen}>
@@ -217,130 +187,16 @@ export default function Settings() {
           />
         </Section>
 
-        {/* ── Subscription ── */}
-        <Section title="Subscription" colors={colors}>
-          {isSubscribed ? (
-            <SettingRow
-              label="Status"
-              colors={colors}
-              last
-              right={
-                <View style={[act.pill, { backgroundColor: colors.successBg, borderColor: colors.success }]}>
-                  <Text style={[act.pillText, { color: colors.success }]}>Active</Text>
-                </View>
-              }
-            />
-          ) : (
-            <>
-              <SettingRow
-                label="Free trial"
-                subtitle={
-                  daysRemaining > 0
-                    ? `${daysRemaining} of ${TRIAL_DAYS} days remaining`
-                    : "Your trial has ended"
-                }
-                colors={colors}
-                right={
-                  <View style={[
-                    act.pill,
-                    {
-                      backgroundColor: daysRemaining > 7 ? colors.accentSoft  : colors.warningBg,
-                      borderColor:     daysRemaining > 7 ? colors.accent       : colors.warning,
-                    },
-                  ]}>
-                    <Text style={[
-                      act.pillText,
-                      { color: daysRemaining > 7 ? colors.accent : colors.warning },
-                    ]}>
-                      {daysRemaining > 0 ? `${daysRemaining}d left` : "Expired"}
-                    </Text>
-                  </View>
-                }
-              />
-              <SettingRow
-                label="Subscribe"
-                subtitle="$4.99/month or $29.99/year — unlock the full app"
-                colors={colors}
-                last
-                onPress={async () => {
-                  const result = await purchase("annual");
-                  if (!result.ok) Alert.alert("Not available yet", result.error);
-                }}
-                right={<Text style={{ color: colors.textMuted, fontSize: 18 }}>›</Text>}
-              />
-            </>
-          )}
-        </Section>
-
-        {/* ── Budget cycle ── */}
-        <Section title="Budget cycle" colors={colors}>
+        {/* ── Support ── */}
+        <Section title="Support" colors={colors}>
           <ChevronRow
-            label="Cycle frequency"
-            subtitle="How often your budget period resets"
-            value={cycle ? cycle.charAt(0).toUpperCase() + cycle.slice(1) : "Monthly"}
-            onPress={handleCycleChange}
-            colors={colors}
-          />
-          <SettingRow
-            label="End cycle now"
-            subtitle="Resets non-rollover envelopes to zero"
-            colors={colors}
-            last
-            onPress={() => {
-              Alert.alert(
-                "End cycle",
-                "Non-rollover envelopes will be zeroed and funds returned to unallocated. Continue?",
-                [
-                  { text: "Cancel", style: "cancel" },
-                  {
-                    text: "End cycle",
-                    onPress: () => router.push("/cycle"),
-                  },
-                ]
-              );
-            }}
-            right={
-              <View style={[act.pill, { backgroundColor: colors.warningBg, borderColor: colors.warning }]}>
-                <Text style={[act.pillText, { color: colors.warning }]}>Run now</Text>
-              </View>
+            label="Contact us"
+            subtitle="Send feedback or report an issue"
+            onPress={() =>
+              Linking.openURL(
+                "mailto:tend.budget.app@outlook.com?subject=Tend%20App%20Feedback"
+              )
             }
-          />
-        </Section>
-
-        {/* ── Income schedule ── */}
-        <Section title="Income schedule" colors={colors}>
-          <ChevronRow
-            label="Pay frequency"
-            subtitle="Used for automatic envelope allocation"
-            value={freqLabel}
-            onPress={handleFrequencyChange}
-            colors={colors}
-          />
-          <ChevronRow
-            label="Income schedule"
-            subtitle="Set your pay dates and amounts"
-            onPress={() => router.push("/income-schedule")}
-            colors={colors}
-            last
-          />
-        </Section>
-
-        {/* ── Bank connection ── */}
-        <Section title="Bank connection" colors={colors}>
-          <SettingRow
-            label="Connected bank"
-            subtitle="Fiskl demo account"
-            colors={colors}
-            right={
-              <View style={[act.pill, { backgroundColor: colors.successBg, borderColor: colors.success }]}>
-                <Text style={[act.pillText, { color: colors.success }]}>Connected</Text>
-              </View>
-            }
-          />
-          <ChevronRow
-            label="Manage connection"
-            subtitle="Reconnect or change your bank"
-            onPress={() => router.push("/bank-connect")}
             colors={colors}
             last
           />
@@ -403,6 +259,13 @@ export default function Settings() {
               onPress={() => router.push("/cycle")}
               colors={colors}
             />
+            <ToggleRow
+              label="Simulate free user"
+              subtitle="Hides bank sync, shows Add Income + Add Spend"
+              value={devForceFree}
+              onValueChange={toggleDevForceFree}
+              colors={colors}
+            />
             <SettingRow
               label="Disable developer mode"
               colors={colors}
@@ -412,6 +275,44 @@ export default function Settings() {
             />
           </Section>
         )}
+
+        {/* ── Security ── */}
+        <Section title="Security" colors={colors}>
+          <ChevronRow
+            label={pinEnabled ? "Change PIN" : "Set up PIN"}
+            subtitle={
+              pinEnabled
+                ? "Update your 4-digit quick-access PIN"
+                : "Lock the app with a 4-digit PIN after 5 minutes of inactivity"
+            }
+            onPress={() => router.push("/pin-setup")}
+            colors={colors}
+            last={!pinEnabled}
+          />
+          {pinEnabled && (
+            <SettingRow
+              label="Remove PIN"
+              subtitle="Disable PIN lock entirely"
+              colors={colors}
+              last
+              onPress={() => {
+                Alert.alert(
+                  "Remove PIN",
+                  "PIN lock will be disabled. You can set it up again at any time.",
+                  [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                      text: "Remove PIN",
+                      style: "destructive",
+                      onPress: () => disablePin(),
+                    },
+                  ]
+                );
+              }}
+              right={<Text style={{ color: colors.danger, fontSize: 18 }}>›</Text>}
+            />
+          )}
+        </Section>
 
         {/* ── Account ── */}
         <Section title="Account" colors={colors}>

@@ -1,5 +1,5 @@
 // app/bank-connect.js
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -11,13 +11,16 @@ import {
   SafeAreaView,
 } from "react-native";
 import * as Linking from "expo-linking";
+import * as WebBrowser from "expo-web-browser";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import { useBudget } from "../context/BudgetContext";
 import { usePurchase } from "../context/PurchaseContext";
+import { useAuth } from "../context/AuthContext";
 import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BANK_BACKEND_URL ?? "https://envelope-bank-backend.onrender.com";
-const END_USER_ID = "353iNGH5lbSBAbGQJcIfhAY5iCQ";
+const CONNECTED_KEY = "@bank_connected";
 
 // ── Step row ──────────────────────────────────────────────────────────────────
 
@@ -43,10 +46,46 @@ function StepRow({ number, title, body, done, colors }) {
 export default function BankConnectScreen() {
   const [busy, setBusy]           = useState(false);
   const [connected, setConnected] = useState(false);
+  const [checking, setChecking]   = useState(true);
   const { importBankTransactions } = useBudget();
   const { hasBankAccess }          = usePurchase();
+  const { token }                  = useAuth();
   const { colors }                 = useTheme();
   const s                          = makeStyles(colors);
+
+  const authHeaders = useMemo(() => ({
+    "Content-Type":  "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  }), [token]);
+
+  const redirectUri = useMemo(() => Linking.createURL("/bank/callback"), []);
+
+  // Check backend for live connection status on mount
+  useEffect(() => {
+    if (!hasBankAccess || !token) { setChecking(false); return; }
+    (async () => {
+      try {
+        const r = await fetch(`${BACKEND_URL}/fiskil/status`, { headers: authHeaders });
+        if (r.ok) {
+          const j = await r.json();
+          if (j.connected) {
+            setConnected(true);
+            await AsyncStorage.setItem(CONNECTED_KEY, "1");
+          } else {
+            // Fall back to cached local state in case backend is cold-starting
+            const cached = await AsyncStorage.getItem(CONNECTED_KEY);
+            setConnected(cached === "1");
+          }
+        }
+      } catch {
+        // Offline or backend sleeping — use cached value
+        const cached = await AsyncStorage.getItem(CONNECTED_KEY);
+        setConnected(cached === "1");
+      } finally {
+        setChecking(false);
+      }
+    })();
+  }, [hasBankAccess, token]);
 
   // ── Premium gate ────────────────────────────────────────────────────────────
   if (!hasBankAccess) {
@@ -78,34 +117,53 @@ export default function BankConnectScreen() {
     );
   }
 
-  const redirectUri = useMemo(() => Linking.createURL("/bank/callback"), []);
-
-  const onConnect = async () => {
+  const onConnect = useCallback(async () => {
     try {
       setBusy(true);
+
+      // Ask backend to create (or reuse) a Fiskil end-user and open an auth session
       const r = await fetch(`${BACKEND_URL}/fiskil/connect/start`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ endUserId: END_USER_ID, redirectUri }),
+        method:  "POST",
+        headers: authHeaders,
+        body:    JSON.stringify({ redirectUri }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "Connection failed");
-      setConnected(true);
-      Alert.alert("Bank connected", "Your bank account has been linked successfully.");
+
+      const { url, fiskilEndUserId } = j;
+      if (!url) throw new Error("No consent URL returned from server");
+
+      // Open Fiskil's bank-selection / consent page inside the app
+      const result = await WebBrowser.openAuthSessionAsync(url, redirectUri);
+
+      if (result.type === "success" || result.type === "dismiss") {
+        // Whether or not they completed consent, tell the backend we have the end-user ID
+        if (fiskilEndUserId) {
+          await fetch(`${BACKEND_URL}/fiskil/connect/complete`, {
+            method:  "POST",
+            headers: authHeaders,
+            body:    JSON.stringify({ fiskilEndUserId }),
+          });
+        }
+        setConnected(true);
+        await AsyncStorage.setItem(CONNECTED_KEY, "1");
+        Alert.alert("Bank connected", "Your bank account has been linked successfully.");
+      }
+      // type === "cancel" means user closed without completing — do nothing
     } catch (e) {
       Alert.alert("Connection failed", e.message || "Please try again.");
     } finally {
       setBusy(false);
     }
-  };
+  }, [authHeaders, redirectUri]);
 
-  const onImport = async () => {
+  const onImport = useCallback(async () => {
     try {
       setBusy(true);
       const r = await fetch(`${BACKEND_URL}/fiskil/transactions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ endUserId: END_USER_ID, limit: 100 }),
+        method:  "POST",
+        headers: authHeaders,
+        body:    JSON.stringify({ limit: 100 }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(`${r.status}: ${JSON.stringify(j)}`);
@@ -126,7 +184,33 @@ export default function BankConnectScreen() {
     } finally {
       setBusy(false);
     }
-  };
+  }, [authHeaders, importBankTransactions]);
+
+  const onDisconnect = useCallback(() => {
+    Alert.alert(
+      "Disconnect bank",
+      "Your transaction history will remain. Continue?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Disconnect",
+          style: "destructive",
+          onPress: async () => {
+            setConnected(false);
+            await AsyncStorage.removeItem(CONNECTED_KEY);
+          },
+        },
+      ]
+    );
+  }, []);
+
+  if (checking) {
+    return (
+      <SafeAreaView style={[s.screen, { justifyContent: "center", alignItems: "center" }]}>
+        <ActivityIndicator color={colors.accent} />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={s.screen}>
@@ -171,14 +255,14 @@ export default function BankConnectScreen() {
         </View>
 
         {/* ── Status card ── */}
-        <View style={[s.card, status.wrap, { borderColor: connected ? colors.success : colors.border }]}>
-          <View style={[status.dot, { backgroundColor: connected ? colors.success : colors.textMuted }]} />
+        <View style={[s.card, statusSt.wrap, { borderColor: connected ? colors.success : colors.border }]}>
+          <View style={[statusSt.dot, { backgroundColor: connected ? colors.success : colors.textMuted }]} />
           <View style={{ flex: 1 }}>
-            <Text style={[status.label, { color: colors.textPrimary }]}>
+            <Text style={[statusSt.label, { color: colors.textPrimary }]}>
               {connected ? "Bank connected" : "No bank linked"}
             </Text>
-            <Text style={[status.sub, { color: colors.textSecondary }]}>
-              {connected ? "Fiskil sandbox account" : "Tap below to get started"}
+            <Text style={[statusSt.sub, { color: colors.textSecondary }]}>
+              {connected ? "Open banking via Fiskil" : "Tap below to get started"}
             </Text>
           </View>
           {connected && (
@@ -219,16 +303,7 @@ export default function BankConnectScreen() {
           {connected && (
             <TouchableOpacity
               style={[s.secondaryBtn, { borderColor: colors.danger }]}
-              onPress={() => {
-                Alert.alert(
-                  "Disconnect bank",
-                  "Your transaction history will remain. Continue?",
-                  [
-                    { text: "Cancel", style: "cancel" },
-                    { text: "Disconnect", style: "destructive", onPress: () => setConnected(false) },
-                  ]
-                );
-              }}
+              onPress={onDisconnect}
               activeOpacity={0.8}
             >
               <Text style={[s.secondaryBtnText, { color: colors.danger }]}>Disconnect bank</Text>
@@ -301,7 +376,7 @@ const step = StyleSheet.create({
   },
 });
 
-const status = StyleSheet.create({
+const statusSt = StyleSheet.create({
   wrap: {
     flexDirection: "row",
     alignItems: "center",

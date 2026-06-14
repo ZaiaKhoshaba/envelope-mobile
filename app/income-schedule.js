@@ -13,6 +13,8 @@ import {
 import { useRouter } from "expo-router";
 import { useBudget } from "../context/BudgetContext";
 import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
+import { fmt } from "../lib/format";
+import { schedulePaydayReminders } from "../lib/paydayNotifications";
 
 const FREQUENCIES = ["weekly", "fortnightly", "monthly"];
 const DAYS = [
@@ -37,20 +39,36 @@ function isoToYmd(iso) {
 function getNextPayDates(frequency, dayOfWeek, dayOfMonth, anchorDate, count = 3) {
   const dates = [];
   try {
-    let base = anchorDate ? new Date(anchorDate) : new Date();
-    if (isNaN(base.getTime())) base = new Date();
-
     const now = new Date();
-    // Advance past today if anchor is in the past
+
     if (frequency === "weekly" || frequency === "fortnightly") {
       const interval = frequency === "weekly" ? 7 : 14;
-      while (base <= now) base = new Date(base.getTime() + interval * 86400000);
+      let base;
+
+      if (anchorDate) {
+        // Anchor provided — it already falls on the right day, just step forward
+        base = new Date(anchorDate);
+        if (isNaN(base.getTime())) base = new Date();
+        while (base <= now) base = new Date(base.getTime() + interval * 86400000);
+      } else {
+        // No anchor — find the next occurrence of the selected weekday.
+        // dayOfWeek values: 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat, 7=Sun
+        // JS getDay():      0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
+        const jsTarget = dayOfWeek === 7 ? 0 : dayOfWeek;
+        base = new Date(now);
+        base.setHours(0, 0, 0, 0);
+        // Walk forward day-by-day until we land on the target weekday
+        do {
+          base = new Date(base.getTime() + 86400000);
+        } while (base.getDay() !== jsTarget);
+      }
+
       for (let i = 0; i < count; i++) {
         dates.push(new Date(base));
         base = new Date(base.getTime() + interval * 86400000);
       }
     } else {
-      // monthly
+      // Monthly — day-of-month based, unaffected by this bug
       let d = new Date(now.getFullYear(), now.getMonth(), Number(dayOfMonth) || 1);
       if (d <= now) d = new Date(d.getFullYear(), d.getMonth() + 1, Number(dayOfMonth) || 1);
       for (let i = 0; i < count; i++) {
@@ -124,7 +142,7 @@ export default function IncomeScheduleScreen() {
       : DAYS.find(d => d.value === dayOfWeek)?.label
         ? `on ${["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"][dayOfWeek - 1]}s`
         : "";
-    return `You receive $${amt.toFixed(2)} ${freqLabel}${dayLabel ? ` ${dayLabel}` : ""}.`;
+    return `You receive $${fmt(amt)} ${freqLabel}${dayLabel ? ` ${dayLabel}` : ""}.`;
   }, [amount, frequency, dayOfWeek, dayOfMonth]);
 
   const onSave = () => {
@@ -150,13 +168,18 @@ export default function IncomeScheduleScreen() {
       anchorISO = d.toISOString();
     }
 
-    setIncomeSchedule({
+    const newSchedule = {
       amount: amt,
       frequency,
       dayOfWeek: frequency === "monthly" ? null : dayOfWeek,
       dayOfMonth: frequency === "monthly" ? parseInt(dayOfMonth, 10) : null,
       anchorDate: anchorISO,
-    });
+    };
+
+    setIncomeSchedule(newSchedule);
+
+    // Schedule payday reminders for the next few pay dates
+    schedulePaydayReminders(newSchedule);
 
     Alert.alert("Saved ✓", "Your income schedule has been updated.", [
       { text: "Done", onPress: () => router.back() },
@@ -244,7 +267,7 @@ export default function IncomeScheduleScreen() {
             style={[s.input, { marginTop: spacing.xs }]}
             value={anchorDate}
             onChangeText={setAnchorDate}
-            placeholder="YYYY-MM-DD  e.g. 2025-12-06"
+            placeholder="YYYY-MM-DD  e.g. 2026-05-09"
             placeholderTextColor={colors.textMuted}
             returnKeyType="done"
           />
@@ -275,7 +298,7 @@ export default function IncomeScheduleScreen() {
                   </View>
                   <Text style={[inc.dateText, { color: colors.textPrimary }]}>{formatDate(d)}</Text>
                   <Text style={[inc.dateAmount, { color: colors.success }]}>
-                    +${Number(amount || 0).toFixed(2)}
+                    +${fmt(Number(amount || 0))}
                   </Text>
                 </View>
               ))}

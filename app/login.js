@@ -11,6 +11,7 @@ import {
   Platform,
   ScrollView,
   SafeAreaView,
+  Switch,
 } from "react-native";
 import { useRouter, Link } from "expo-router";
 import { useAuth } from "../context/AuthContext";
@@ -21,10 +22,11 @@ export default function LoginScreen() {
   const { colors, isDark } = useTheme();
   const router = useRouter();
 
-  const [email, setEmail]         = useState("");
-  const [password, setPassword]   = useState("");
-  const [showPass, setShowPass]   = useState(false);
+  const [email, setEmail]           = useState("");
+  const [password, setPassword]     = useState("");
+  const [showPass, setShowPass]     = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
 
   useEffect(() => {
     if (isAuthenticated) router.replace("/");
@@ -36,7 +38,7 @@ export default function LoginScreen() {
       return;
     }
     setSubmitting(true);
-    const res = await login(email.trim(), password);
+    const res = await login(email.trim(), password, rememberMe);
     setSubmitting(false);
     if (res.ok) router.replace("/");
   };
@@ -61,12 +63,12 @@ export default function LoginScreen() {
             <View style={[s.logoWrap, { backgroundColor: colors.accent }]}>
               <View style={[s.logoFlap, { borderBottomColor: colors.accent }]} />
               <View style={[s.logoBody, { borderColor: "rgba(255,255,255,0.35)" }]} />
-              <Text style={s.logoLetter}>E</Text>
+              <Text style={s.logoLetter}>T</Text>
             </View>
 
-            <Text style={[s.appName, { color: colors.textPrimary }]}>Envelopes</Text>
+            <Text style={[s.appName, { color: colors.textPrimary }]}>Tend</Text>
             <Text style={[s.tagline, { color: colors.textSecondary }]}>
-              Your money, organised.
+              Tend to your money.
             </Text>
           </View>
 
@@ -128,6 +130,26 @@ export default function LoginScreen() {
               </View>
             </View>
 
+            {/* Remember me */}
+            <TouchableOpacity
+              style={s.rememberRow}
+              onPress={() => setRememberMe(v => !v)}
+              activeOpacity={0.7}
+            >
+              <Switch
+                value={rememberMe}
+                onValueChange={setRememberMe}
+                trackColor={{ false: colors.border, true: colors.accent }}
+                thumbColor="#fff"
+              />
+              <View style={{ flex: 1 }}>
+                <Text style={[s.rememberLabel, { color: colors.textPrimary }]}>Remember me</Text>
+                <Text style={[s.rememberSub, { color: colors.textSecondary }]}>
+                  Stay signed in between app sessions
+                </Text>
+              </View>
+            </TouchableOpacity>
+
             {/* Submit */}
             <TouchableOpacity
               style={[s.primaryBtn, { backgroundColor: colors.accent }, (submitting || loading) && { opacity: 0.7 }]}
@@ -141,6 +163,13 @@ export default function LoginScreen() {
                 <Text style={s.primaryBtnText}>Sign in</Text>
               )}
             </TouchableOpacity>
+
+            {/* Connecting hint — shown during Render cold start */}
+            {submitting && (
+              <Text style={[s.connectingText, { color: colors.textMuted }]}>
+                Connecting to server — this can take up to 30 seconds on first use…
+              </Text>
+            )}
 
             {/* Switch to register */}
             <View style={s.switchRow}>
@@ -273,6 +302,21 @@ const s = StyleSheet.create({
     justifyContent: "center",
   },
 
+  // Remember me
+  rememberRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+  },
+  rememberLabel: {
+    fontSize: typography.sm,
+    fontWeight: typography.semibold,
+  },
+  rememberSub: {
+    fontSize: typography.xs,
+    marginTop: 2,
+  },
+
   // Buttons
   primaryBtn: {
     height: 52,
@@ -297,4 +341,9 @@ const s = StyleSheet.create({
   },
   switchText: { fontSize: typography.sm },
   linkText: { fontSize: typography.sm, fontWeight: typography.bold },
+  connectingText: {
+    fontSize: typography.xs,
+    textAlign: "center",
+    marginTop: -spacing.xs,
+  },
 });

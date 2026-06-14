@@ -12,6 +12,7 @@ import {
 import { useRouter } from "expo-router";
 import { useBudget } from "../context/BudgetContext";
 import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
+import { fmt } from "../lib/format";
 
 const CYCLE_OPTIONS = [
   {
@@ -65,7 +66,7 @@ export default function CycleScreen() {
 
     Alert.alert(
       "End cycle?",
-      `${willReset.length} envelope${willReset.length > 1 ? "s" : ""} will be zeroed and $${totalResetting.toFixed(2)} returned to unallocated.\n\n${willRollover.length} envelope${willRollover.length > 1 ? "s" : ""} will keep their balance.`,
+      `${willReset.length} envelope${willReset.length > 1 ? "s" : ""} will be zeroed and $${fmt(totalResetting)} returned to unallocated.\n\n${willRollover.length} envelope${willRollover.length > 1 ? "s" : ""} will keep their balance.`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -79,7 +80,7 @@ export default function CycleScreen() {
             dispatch({ type: "SET_ENVELOPES", envelopes: updated });
             Alert.alert(
               "Cycle ended ✓",
-              `$${totalResetting.toFixed(2)} returned to unallocated.`,
+              `$${fmt(totalResetting)} returned to unallocated.`,
               [{ text: "Done", onPress: () => router.back() }]
             );
           },
@@ -171,7 +172,7 @@ export default function CycleScreen() {
                   <View key={e.id} style={cyc.previewRow}>
                     <Text style={[cyc.previewName, { color: colors.textPrimary }]}>{e.name}</Text>
                     <Text style={[cyc.previewAmount, { color: colors.danger }]}>
-                      -${(e.amount ?? 0).toFixed(2)}
+                      -${fmt(e.amount ?? 0)}
                     </Text>
                   </View>
                 ))}
@@ -180,7 +181,7 @@ export default function CycleScreen() {
                     Returned to unallocated
                   </Text>
                   <Text style={[cyc.previewAmount, { color: colors.success, fontWeight: typography.bold }]}>
-                    +${totalResetting.toFixed(2)}
+                    +${fmt(totalResetting)}
                   </Text>
                 </View>
               </View>
@@ -195,7 +196,7 @@ export default function CycleScreen() {
                   <View key={e.id} style={cyc.previewRow}>
                     <Text style={[cyc.previewName, { color: colors.textPrimary }]}>{e.name}</Text>
                     <Text style={[cyc.previewAmount, { color: colors.success }]}>
-                      ${(e.amount ?? 0).toFixed(2)}
+                      ${fmt(e.amount ?? 0)}
                     </Text>
                   </View>
                 ))}

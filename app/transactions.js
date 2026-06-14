@@ -11,7 +11,9 @@ import {
   SafeAreaView,
 } from "react-native";
 import { useBudget } from "../context/BudgetContext";
+import { usePurchase } from "../context/PurchaseContext";
 import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
+import { fmt } from "../lib/format";
 
 // ── Status pill ───────────────────────────────────────────────────────────────
 
@@ -44,7 +46,7 @@ function TxCard({ t, onAllocate, envelopes, colors }) {
   const isSpend  = t.kind === "spend";
 
   const displaySign = isIncome ? "+" : "-";
-  const amountAbs   = Math.abs(Number(t.amount) || 0).toFixed(2);
+  const amountAbs   = fmt(Math.abs(Number(t.amount) || 0));
   const amountText  = `${displaySign}$${amountAbs}`;
   const amountColor = isIncome ? colors.success : colors.danger;
 
@@ -86,7 +88,7 @@ function TxCard({ t, onAllocate, envelopes, colors }) {
         />
         {isSpend && !isAllocated && remaining > 0 && (
           <Text style={[txcard.remaining, { color: colors.textSecondary }]}>
-            Unallocated: ${remaining.toFixed(2)}
+            Unallocated: ${fmt(remaining)}
           </Text>
         )}
       </View>
@@ -103,7 +105,7 @@ function TxCard({ t, onAllocate, envelopes, colors }) {
                 key={`${t.id}_a_${a.sourceId}_${i}`}
                 style={[txcard.allocLine, { color: colors.textSecondary }]}
               >
-                • {label}: ${Number(a.used).toFixed(2)}
+                • {label}: ${fmt(Number(a.used))}
               </Text>
             );
           })}
@@ -128,6 +130,7 @@ function TxCard({ t, onAllocate, envelopes, colors }) {
 
 export default function TransactionsScreen() {
   const { state, allocateOutstanding, unallocated, importBankTransactions } = useBudget();
+  const { hasBankAccess } = usePurchase();
   const { colors } = useTheme();
   const s = makeStyles(colors);
 
@@ -218,17 +221,19 @@ export default function TransactionsScreen() {
         ))}
       </View>
 
-      {/* ── Import button ── */}
-      <TouchableOpacity
-        style={[imp.btn, { backgroundColor: colors.card, borderColor: colors.border }]}
-        onPress={handleImport}
-        activeOpacity={0.8}
-        disabled={importing}
-      >
-        <Text style={[imp.text, { color: importing ? colors.textMuted : colors.accent }]}>
-          {importing ? "Importing…" : "🏦  Import bank transactions"}
-        </Text>
-      </TouchableOpacity>
+      {/* ── Import button — premium only ── */}
+      {hasBankAccess && (
+        <TouchableOpacity
+          style={[imp.btn, { backgroundColor: colors.card, borderColor: colors.border }]}
+          onPress={handleImport}
+          activeOpacity={0.8}
+          disabled={importing}
+        >
+          <Text style={[imp.text, { color: importing ? colors.textMuted : colors.accent }]}>
+            {importing ? "Importing…" : "🏦  Import bank transactions"}
+          </Text>
+        </TouchableOpacity>
+      )}
 
       {/* ── Transaction list ── */}
       <FlatList
@@ -240,7 +245,9 @@ export default function TransactionsScreen() {
             <Text style={empty.icon}>🧾</Text>
             <Text style={[empty.title, { color: colors.textPrimary }]}>No transactions yet</Text>
             <Text style={[empty.body, { color: colors.textSecondary }]}>
-              Import from your bank or use Mock Spend on the home screen to get started.
+              {hasBankAccess
+                ? "Import from your bank to see transactions here."
+                : "Use Add Income and Add Spend on the home screen to record your transactions."}
             </Text>
           </View>
         }
@@ -263,7 +270,7 @@ export default function TransactionsScreen() {
             {chooserForTx && (
               <View style={[chooser.chip, { backgroundColor: colors.dangerBg }]}>
                 <Text style={[chooser.chipText, { color: colors.danger }]}>
-                  {chooserForTx.merchant || "Spend"} — ${Math.abs(chooserForTx.amount).toFixed(2)}
+                  {chooserForTx.merchant || "Spend"} — ${fmt(Math.abs(chooserForTx.amount))}
                 </Text>
               </View>
             )}
@@ -281,7 +288,7 @@ export default function TransactionsScreen() {
                     Unallocated funds
                   </Text>
                   <Text style={[chooser.sourceMeta, { color: colors.textSecondary }]}>
-                    Available: ${unallocated.toFixed(2)}
+                    Available: ${fmt(unallocated)}
                   </Text>
                 </View>
                 <View style={[chooser.usePill, { backgroundColor: colors.accentSoft }]}>
@@ -300,7 +307,7 @@ export default function TransactionsScreen() {
                   <View style={{ flex: 1 }}>
                     <Text style={[chooser.sourceName, { color: colors.textPrimary }]}>{e.name}</Text>
                     <Text style={[chooser.sourceMeta, { color: colors.textSecondary }]}>
-                      ${e.amount.toFixed(2)} • {e.type === "fixed" ? "Fixed" : "Flexible"} •{" "}
+                      ${fmt(e.amount)} • {e.type === "fixed" ? "Fixed" : e.type === "savings" ? "Savings" : "Flexible"} •{" "}
                       {e.rollover ? "Rolls over" : "Resets"}
                     </Text>
                   </View>

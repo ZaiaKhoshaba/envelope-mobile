@@ -1,10 +1,12 @@
 // app/onboarding.js
 // ─────────────────────────────────────────────────────────────────────────────
-// 4-step onboarding flow shown once after registration:
+// 6-step onboarding flow shown once after registration:
 //   Step 1 — Welcome
 //   Step 2 — How envelopes work
 //   Step 3 — Fixed vs Flexible
-//   Step 4 — Connect your bank (or skip)
+//   Step 4 — Payday automatic allocation
+//   Step 5 — Forecasting shortfalls
+//   Step 6 — Connect your bank (or skip)
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useState, useRef } from "react";
 import {
@@ -19,6 +21,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useTheme, spacing, radius, typography } from "../theme";
+import { usePurchase } from "../context/PurchaseContext";
 
 const { width: SCREEN_W } = Dimensions.get("window");
 
@@ -28,8 +31,8 @@ const SLIDES = [
   {
     key: "welcome",
     emoji: "👋",
-    title: "Welcome to Envelopes",
-    body: "Envelopes is a real-time budgeting app built around one idea: every dollar you have should have a job.\n\nInstead of guessing where your money went, you'll always know exactly where it is.",
+    title: "Welcome to Tend",
+    body: "Tend is a real-time budgeting app built around one idea: every dollar you have should have a job.\n\nInstead of guessing where your money went, you'll always know exactly where it is.",
     cta: "Show me how",
   },
   {
@@ -42,17 +45,30 @@ const SLIDES = [
   {
     key: "types",
     emoji: "🗂",
-    title: "Fixed & Flexible",
-    body: "Fixed envelopes are for known, recurring costs — rent, insurance, subscriptions. These must always be filled.\n\nFlexible envelopes are for variable spending — dining out, entertainment, travel. These give you freedom within a limit.",
+    title: "Three types of envelope",
+    body: "Each envelope has a type that controls how it behaves when you get paid.",
     cta: "Makes sense",
   },
   {
-    key: "bank",
-    emoji: "🏦",
-    title: "Connect your bank",
-    body: "When you connect your bank, every transaction appears in real time. The app will ask you which envelope to draw it from — keeping your budget accurate automatically.\n\nYou can do this now or set it up later.",
-    cta: "Connect bank",
-    secondaryCta: "I'll do this later",
+    key: "allocation",
+    emoji: "⚡",
+    title: "Payday, handled automatically",
+    body: "When you log income, Tend works out exactly how much of each pay belongs to each fixed envelope — based on its share of your total commitments.\n\nNo manual maths. The moment money arrives, it's already spoken for.",
+    cta: "Smart!",
+  },
+  {
+    key: "forecast",
+    emoji: "🔭",
+    title: "See shortfalls before they hit",
+    body: "Tend projects your income between now and each envelope's due date. If a fixed commitment won't be fully funded in time, you'll see a warning — with the exact shortfall — while there's still time to act.\n\nNo nasty surprises at the end of the month.",
+    cta: "Good to know",
+  },
+  {
+    key: "ready",
+    emoji: "🚀",
+    title: "You're all set",
+    body: "Start by entering your current bank balance, then assign every dollar to an envelope.\n\nTend works best when every dollar has a job — so let's get started.",
+    cta: "Let's go",
   },
 ];
 
@@ -82,6 +98,7 @@ function StepDots({ count, current, colors }) {
 export default function Onboarding() {
   const router = useRouter();
   const { colors } = useTheme();
+  const { continueForFree } = usePurchase();
   const [step, setStep] = useState(0);
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
@@ -98,14 +115,17 @@ export default function Onboarding() {
 
   const handleCta = () => {
     if (isLast) {
-      router.replace("/bank-connect");
+      router.replace("/pin-setup");
     } else {
       goTo(step + 1);
     }
   };
 
-  const handleSkip = () => {
-    router.replace("/");
+  const handleSkip = async () => {
+    // Skipping bank connect = free tier. continueForFree() persists this choice
+    // so the user stays on the free plan after app restarts too.
+    await continueForFree();
+    router.replace("/pin-setup");
   };
 
   return (
@@ -137,15 +157,15 @@ export default function Onboarding() {
           <Text style={[s.title, { color: colors.textPrimary }]}>{slide.title}</Text>
           <Text style={[s.body, { color: colors.textSecondary }]}>{slide.body}</Text>
 
-          {/* Feature highlights on step 3 (types) */}
+          {/* Feature highlights — types slide */}
           {slide.key === "types" && (
             <View style={s.highlightsWrap}>
               <View style={[s.highlight, { backgroundColor: colors.fixedBg, borderColor: colors.border }]}>
-                <Text style={[s.highlightIcon]}>🔒</Text>
+                <Text style={s.highlightIcon}>🔒</Text>
                 <View style={{ flex: 1 }}>
                   <Text style={[s.highlightTitle, { color: colors.textPrimary }]}>Fixed</Text>
                   <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
-                    Rent, mortgage, insurance, subscriptions
+                    Rent, mortgage, insurance, subscriptions — must always be filled
                   </Text>
                 </View>
               </View>
@@ -154,7 +174,76 @@ export default function Onboarding() {
                 <View style={{ flex: 1 }}>
                   <Text style={[s.highlightTitle, { color: colors.flexible }]}>Flexible</Text>
                   <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
-                    Dining, entertainment, travel, shopping
+                    Dining, entertainment, travel — spend freely within your limit
+                  </Text>
+                </View>
+              </View>
+              <View style={[s.highlight, { backgroundColor: colors.successBg, borderColor: colors.border }]}>
+                <Text style={s.highlightIcon}>📈</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.highlightTitle, { color: colors.success }]}>Savings</Text>
+                  <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
+                    Holiday, emergency fund, car — grows with a fixed contribution each pay
+                  </Text>
+                </View>
+              </View>
+            </View>
+          )}
+
+          {/* Feature highlights — allocation slide */}
+          {slide.key === "allocation" && (
+            <View style={s.highlightsWrap}>
+              <View style={[s.highlight, { backgroundColor: colors.accentSoft, borderColor: colors.border }]}>
+                <Text style={s.highlightIcon}>🏠</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.highlightTitle, { color: colors.textPrimary }]}>Mortgage — 67%</Text>
+                  <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
+                    Gets 67% of every pay automatically
+                  </Text>
+                </View>
+                <Text style={[s.highlightBadge, { color: colors.accent }]}>+$1,005</Text>
+              </View>
+              <View style={[s.highlight, { backgroundColor: colors.accentSoft, borderColor: colors.border }]}>
+                <Text style={s.highlightIcon}>🚗</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.highlightTitle, { color: colors.textPrimary }]}>Car — 16%</Text>
+                  <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
+                    Gets its proportional share each pay
+                  </Text>
+                </View>
+                <Text style={[s.highlightBadge, { color: colors.accent }]}>+$240</Text>
+              </View>
+              <View style={[s.highlight, { backgroundColor: colors.accentSoft, borderColor: colors.border }]}>
+                <Text style={s.highlightIcon}>🏖</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.highlightTitle, { color: colors.textPrimary }]}>Holiday — 16%</Text>
+                  <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
+                    Building up steadily towards its target
+                  </Text>
+                </View>
+                <Text style={[s.highlightBadge, { color: colors.accent }]}>+$240</Text>
+              </View>
+            </View>
+          )}
+
+          {/* Feature highlights — forecast slide */}
+          {slide.key === "forecast" && (
+            <View style={s.highlightsWrap}>
+              <View style={[s.highlight, { backgroundColor: colors.successBg, borderColor: colors.success }]}>
+                <Text style={s.highlightIcon}>✅</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.highlightTitle, { color: colors.success }]}>Groceries — on track</Text>
+                  <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
+                    Projected income will cover this by the due date
+                  </Text>
+                </View>
+              </View>
+              <View style={[s.highlight, { backgroundColor: colors.dangerBg, borderColor: colors.danger }]}>
+                <Text style={s.highlightIcon}>⚠️</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.highlightTitle, { color: colors.danger }]}>Mortgage — $135 short</Text>
+                  <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
+                    Not enough pays left before the due date
                   </Text>
                 </View>
               </View>
@@ -187,18 +276,6 @@ export default function Onboarding() {
           </TouchableOpacity>
         </View>
 
-        {/* Secondary CTA on its own row (last step only) */}
-        {isLast && slide.secondaryCta && (
-          <TouchableOpacity
-            style={[s.secondaryBtn, { borderColor: colors.border }]}
-            onPress={handleSkip}
-            activeOpacity={0.7}
-          >
-            <Text style={[s.secondaryBtnText, { color: colors.textSecondary }]}>
-              {slide.secondaryCta}
-            </Text>
-          </TouchableOpacity>
-        )}
 
       </View>
 
@@ -284,6 +361,12 @@ const s = StyleSheet.create({
   highlightBody: {
     fontSize: typography.sm,
   },
+  highlightBadge: {
+    fontSize: typography.sm,
+    fontWeight: typography.bold,
+    alignSelf: "center",
+    marginLeft: spacing.xs,
+  },
 
   // Footer
   footer: {
@@ -319,17 +402,6 @@ const s = StyleSheet.create({
     color: "#fff",
     fontSize: typography.md,
     fontWeight: typography.bold,
-  },
-  secondaryBtn: {
-    height: 48,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  secondaryBtnText: {
-    fontSize: typography.md,
-    fontWeight: typography.medium,
   },
 });
 
