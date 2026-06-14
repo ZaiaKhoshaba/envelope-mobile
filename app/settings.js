@@ -14,7 +14,7 @@ import { useRouter } from "expo-router";
 import { Linking } from "react-native";
 import { useBudget } from "../context/BudgetContext";
 import { useAuth } from "../context/AuthContext";
-import { usePurchase } from "../context/PurchaseContext";
+import { usePurchase, PLANS } from "../context/PurchaseContext";
 import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
 
 const DEV_UNLOCK_TAPS = 5;
@@ -105,7 +105,7 @@ export default function Settings() {
   const { colors, isDark, toggle } = useTheme();
   const { resetAll, simulateRandomSpend } = useBudget();
   const { logout, user, pinEnabled, disablePin } = useAuth();
-  const { devForceFree, toggleDevForceFree } = usePurchase();
+  const { devForceFree, toggleDevForceFree, isSubscribed, isFreeUser, trialExpired, daysRemaining, purchase, restorePurchases } = usePurchase();
   const s = makeStyles(colors);
 
 
@@ -174,6 +174,55 @@ export default function Settings() {
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: 60 }}
         showsVerticalScrollIndicator={false}
       >
+
+        {/* ── Subscription ── */}
+        <Section title="Subscription" colors={colors}>
+          <SettingRow
+            label="Current plan"
+            subtitle={
+              isSubscribed ? "Premium" :
+              isFreeUser   ? "Free" :
+              trialExpired ? "Trial expired" :
+              `Free trial — ${daysRemaining} day${daysRemaining !== 1 ? "s" : ""} left`
+            }
+            colors={colors}
+            right={
+              isSubscribed ? (
+                <View style={{ backgroundColor: colors.accentSoft, borderRadius: radius.sm, paddingHorizontal: spacing.sm, paddingVertical: 2 }}>
+                  <Text style={{ color: colors.accent, fontSize: typography.xs, fontWeight: typography.bold }}>ACTIVE</Text>
+                </View>
+              ) : null
+            }
+          />
+          {!isSubscribed && (
+            <ChevronRow
+              label="Upgrade to Premium"
+              subtitle={`${PLANS.monthly.price}/mo · Bank sync, spend alerts, one-tap allocation`}
+              onPress={async () => {
+                Alert.alert(
+                  "Upgrade to Premium",
+                  `${PLANS.monthly.price}/month or ${PLANS.annual.price}/year.\n\nBank sync lets Tend automatically import your transactions.`,
+                  [
+                    { text: "Cancel", style: "cancel" },
+                    { text: `${PLANS.monthly.price}/mo`, onPress: () => purchase("monthly") },
+                    { text: `${PLANS.annual.price}/yr`, onPress: () => purchase("annual") },
+                  ]
+                );
+              }}
+              colors={colors}
+            />
+          )}
+          <ChevronRow
+            label="Restore purchases"
+            subtitle="Tap if you've already subscribed"
+            onPress={async () => {
+              await restorePurchases();
+              Alert.alert("Restore complete", "If you have an active subscription it has been restored.");
+            }}
+            colors={colors}
+            last
+          />
+        </Section>
 
         {/* ── Appearance ── */}
         <Section title="Appearance" colors={colors}>

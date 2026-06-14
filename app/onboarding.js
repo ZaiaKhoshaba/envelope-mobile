@@ -21,7 +21,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useTheme, spacing, radius, typography } from "../theme";
-import { usePurchase } from "../context/PurchaseContext";
+import { usePurchase, PLANS } from "../context/PurchaseContext";
 
 const { width: SCREEN_W } = Dimensions.get("window");
 
@@ -64,11 +64,11 @@ const SLIDES = [
     cta: "Good to know",
   },
   {
-    key: "ready",
-    emoji: "🚀",
-    title: "You're all set",
-    body: "Start by entering your current bank balance, then assign every dollar to an envelope.\n\nTend works best when every dollar has a job — so let's get started.",
-    cta: "Let's go",
+    key: "pricing",
+    emoji: "🏦",
+    title: "Choose your plan",
+    body: "Tend is free to use. Connect your bank to unlock automatic transaction sync.",
+    cta: "Start free trial",
   },
 ];
 
@@ -98,7 +98,7 @@ function StepDots({ count, current, colors }) {
 export default function Onboarding() {
   const router = useRouter();
   const { colors } = useTheme();
-  const { continueForFree } = usePurchase();
+  const { continueForFree, purchase } = usePurchase();
   const [step, setStep] = useState(0);
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
@@ -113,8 +113,9 @@ export default function Onboarding() {
     setTimeout(() => setStep(nextStep), 120);
   };
 
-  const handleCta = () => {
+  const handleCta = async () => {
     if (isLast) {
+      // "Start free trial" — trial begins automatically, just proceed
       router.replace("/pin-setup");
     } else {
       goTo(step + 1);
@@ -122,17 +123,20 @@ export default function Onboarding() {
   };
 
   const handleSkip = async () => {
-    // Skipping bank connect = free tier. continueForFree() persists this choice
-    // so the user stays on the free plan after app restarts too.
     await continueForFree();
+    router.replace("/pin-setup");
+  };
+
+  const handleSubscribe = async (planKey) => {
+    await purchase(planKey);
     router.replace("/pin-setup");
   };
 
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: colors.bg }]}>
 
-      {/* Skip button top-right (not on last step) */}
-      {!isLast && (
+      {/* Skip button top-right (not on last two steps) */}
+      {step < SLIDES.length - 1 && (
         <TouchableOpacity style={s.skipBtn} onPress={handleSkip} activeOpacity={0.7}>
           <Text style={[s.skipText, { color: colors.textMuted }]}>Skip</Text>
         </TouchableOpacity>
@@ -226,6 +230,55 @@ export default function Onboarding() {
             </View>
           )}
 
+          {/* Pricing slide */}
+          {slide.key === "pricing" && (
+            <View style={s.highlightsWrap}>
+              {/* Free tier */}
+              <View style={[s.highlight, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <Text style={s.highlightIcon}>✅</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.highlightTitle, { color: colors.textPrimary }]}>Free — always</Text>
+                  <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
+                    Envelopes, budgeting, income allocation, forecasts
+                  </Text>
+                </View>
+              </View>
+              {/* Premium tier */}
+              <View style={[s.highlight, { backgroundColor: colors.accentSoft, borderColor: colors.accent }]}>
+                <Text style={s.highlightIcon}>🏦</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.highlightTitle, { color: colors.accent }]}>
+                    Premium — {PLANS.monthly.price}/mo
+                  </Text>
+                  <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
+                    Automatic bank sync, one-tap transaction allocation, spend notifications
+                  </Text>
+                </View>
+              </View>
+              {/* Trial note */}
+              <Text style={{ color: colors.textMuted, fontSize: typography.xs, textAlign: "center", marginTop: spacing.xs }}>
+                30-day free trial included — no card required to start.
+              </Text>
+              {/* Subscribe button */}
+              <TouchableOpacity
+                style={[s.ctaBtn, { backgroundColor: colors.accent, marginTop: spacing.sm }]}
+                onPress={() => handleSubscribe("monthly")}
+                activeOpacity={0.85}
+              >
+                <Text style={s.ctaBtnText}>Subscribe — {PLANS.monthly.price}/mo</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[s.backBtn, { borderColor: colors.border, alignSelf: "stretch", marginTop: spacing.xs }]}
+                onPress={handleSkip}
+                activeOpacity={0.7}
+              >
+                <Text style={[s.backBtnText, { color: colors.textSecondary, textAlign: "center" }]}>
+                  Continue free (no bank sync)
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
           {/* Feature highlights — forecast slide */}
           {slide.key === "forecast" && (
             <View style={s.highlightsWrap}>
@@ -253,31 +306,29 @@ export default function Onboarding() {
         </Animated.View>
       </ScrollView>
 
-      {/* ── Bottom actions ── */}
-      <View style={[s.footer, { borderTopColor: colors.border }]}>
-
-        {/* Row: Back + Primary CTA */}
-        <View style={s.footerRow}>
-          {step > 0 && (
+      {/* ── Bottom actions — hidden on pricing slide (it has inline buttons) ── */}
+      {slide.key !== "pricing" && (
+        <View style={[s.footer, { borderTopColor: colors.border }]}>
+          <View style={s.footerRow}>
+            {step > 0 && (
+              <TouchableOpacity
+                style={[s.backBtn, { borderColor: colors.border }]}
+                onPress={() => goTo(step - 1)}
+                activeOpacity={0.7}
+              >
+                <Text style={[s.backBtnText, { color: colors.textSecondary }]}>← Back</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
-              style={[s.backBtn, { borderColor: colors.border }]}
-              onPress={() => goTo(step - 1)}
-              activeOpacity={0.7}
+              style={[s.ctaBtn, { backgroundColor: colors.accent, flex: 1 }]}
+              onPress={handleCta}
+              activeOpacity={0.85}
             >
-              <Text style={[s.backBtnText, { color: colors.textSecondary }]}>← Back</Text>
+              <Text style={s.ctaBtnText}>{slide.cta}</Text>
             </TouchableOpacity>
-          )}
-          <TouchableOpacity
-            style={[s.ctaBtn, { backgroundColor: colors.accent, flex: 1 }]}
-            onPress={handleCta}
-            activeOpacity={0.85}
-          >
-            <Text style={s.ctaBtnText}>{slide.cta}</Text>
-          </TouchableOpacity>
+          </View>
         </View>
-
-
-      </View>
+      )}
 
     </SafeAreaView>
   );
