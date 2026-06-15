@@ -8,7 +8,7 @@
 //   Step 5 — Forecasting shortfalls
 //   Step 6 — Connect your bank (or skip)
 // ─────────────────────────────────────────────────────────────────────────────
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -24,6 +24,173 @@ import { useTheme, spacing, radius, typography } from "../theme";
 import { usePurchase, PLANS } from "../context/PurchaseContext";
 
 const { width: SCREEN_W } = Dimensions.get("window");
+
+// ── Money animation constants ─────────────────────────────────────────────────
+
+// Starting positions of the 5 bills (relative to the 200×160 animation canvas)
+const BILL_STARTS = [
+  { x:  10, y:  10 },
+  { x: 140, y:   5 },
+  { x:  60, y: 110 },
+  { x: 155, y:  90 },
+  { x:  85, y:  30 },
+];
+
+// The 3 envelope targets on the "how" slide
+const ENV_TARGETS = [
+  { x: 14,  y: 60, label: "🏠 Rent",       color: "#2563EB" },
+  { x: 74,  y: 60, label: "🛒 Groceries",  color: "#16a34a" },
+  { x: 134, y: 60, label: "✈️ Holiday",    color: "#9333ea" },
+];
+
+// Bill assignment: bill i flies to ENV_TARGETS[billToEnv[i]]
+const BILL_TO_ENV = [0, 1, 2, 0, 1];
+
+// ── WelcomeIllustration — floating bills ─────────────────────────────────────
+
+function WelcomeIllustration({ colors }) {
+  const floats = useRef(BILL_STARTS.map(() => new Animated.Value(0))).current;
+
+  useEffect(() => {
+    const anims = floats.map((anim, i) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(anim, { toValue: 1, duration: 900 + i * 150, useNativeDriver: true }),
+          Animated.timing(anim, { toValue: 0, duration: 900 + i * 150, useNativeDriver: true }),
+        ])
+      )
+    );
+    Animated.stagger(180, anims).start();
+    return () => anims.forEach(a => a.stop());
+  }, []);
+
+  return (
+    <View style={anim.canvas}>
+      {/* Central "bank" circle */}
+      <View style={[anim.bank, { backgroundColor: colors.accentSoft, borderColor: colors.accent }]}>
+        <Text style={anim.bankEmoji}>🏦</Text>
+      </View>
+      {/* Floating bills */}
+      {BILL_STARTS.map((pos, i) => (
+        <Animated.Text
+          key={i}
+          style={[
+            anim.bill,
+            {
+              left: pos.x,
+              top:  pos.y,
+              transform: [{ translateY: floats[i].interpolate({ inputRange: [0, 1], outputRange: [0, -8] }) }],
+            },
+          ]}
+        >
+          💵
+        </Animated.Text>
+      ))}
+    </View>
+  );
+}
+
+// ── HowIllustration — bills fly into envelopes ───────────────────────────────
+
+function HowIllustration({ colors }) {
+  const progresses = useRef(BILL_STARTS.map(() => new Animated.Value(0))).current;
+  const envScales  = useRef(ENV_TARGETS.map(() => new Animated.Value(0))).current;
+
+  useEffect(() => {
+    // Envelopes pop in first
+    const envAnim = Animated.stagger(120,
+      envScales.map(s => Animated.spring(s, { toValue: 1, tension: 180, friction: 8, useNativeDriver: true }))
+    );
+    // Then bills fly in with a delay
+    const flyAnims = Animated.stagger(160,
+      progresses.map(p => Animated.timing(p, { toValue: 1, duration: 500, useNativeDriver: true }))
+    );
+    Animated.sequence([envAnim, Animated.delay(200), flyAnims]).start();
+  }, []);
+
+  return (
+    <View style={anim.canvas}>
+      {/* Envelopes */}
+      {ENV_TARGETS.map((env, i) => (
+        <Animated.View
+          key={i}
+          style={[
+            anim.envelope,
+            { left: env.x, top: env.y, borderColor: env.color, backgroundColor: colors.card },
+            { transform: [{ scale: envScales[i] }] },
+          ]}
+        >
+          <Text style={[anim.envLabel, { color: env.color }]}>{env.label}</Text>
+        </Animated.View>
+      ))}
+      {/* Flying bills */}
+      {BILL_STARTS.map((start, i) => {
+        const target = ENV_TARGETS[BILL_TO_ENV[i]];
+        // Destination: centre of the envelope
+        const destX = target.x + 25;
+        const destY = target.y + 14;
+        return (
+          <Animated.Text
+            key={i}
+            style={[
+              anim.bill,
+              {
+                left: progresses[i].interpolate({ inputRange: [0, 1], outputRange: [start.x, destX] }),
+                top:  progresses[i].interpolate({ inputRange: [0, 1], outputRange: [start.y, destY] }),
+                opacity: progresses[i].interpolate({ inputRange: [0, 0.85, 1], outputRange: [1, 1, 0] }),
+              },
+            ]}
+          >
+            💵
+          </Animated.Text>
+        );
+      })}
+    </View>
+  );
+}
+
+// ── TypesIllustration — three filled envelopes slide in ──────────────────────
+
+const TYPE_ENVS = [
+  { label: "🔒 Fixed",    sub: "Rent, bills",   color: "#2563EB", bgKey: "fixedBg" },
+  { label: "🎯 Flexible", sub: "Dining, fun",   color: "#f59e0b", bgKey: "flexibleBg" },
+  { label: "📈 Savings",  sub: "Holiday, fund", color: "#16a34a", bgKey: "successBg" },
+];
+
+function TypesIllustration({ colors }) {
+  const slides = useRef(TYPE_ENVS.map(() => new Animated.Value(-60))).current;
+
+  useEffect(() => {
+    Animated.stagger(140,
+      slides.map(s => Animated.spring(s, { toValue: 0, tension: 160, friction: 9, useNativeDriver: true }))
+    ).start();
+  }, []);
+
+  return (
+    <View style={{ width: "100%", gap: spacing.sm }}>
+      {TYPE_ENVS.map((e, i) => (
+        <Animated.View
+          key={i}
+          style={[
+            typeEnv.row,
+            {
+              backgroundColor: colors[e.bgKey] || colors.cardAlt,
+              borderColor:     e.color,
+              transform: [{ translateX: slides[i] }],
+            },
+          ]}
+        >
+          <Text style={typeEnv.icon}>{e.label.split(" ")[0]}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[typeEnv.label, { color: e.color }]}>{e.label.split(" ").slice(1).join(" ")}</Text>
+            <Text style={[typeEnv.sub, { color: colors.textSecondary }]}>{e.sub}</Text>
+          </View>
+          <Text style={[typeEnv.money, { color: e.color }]}>💵💵</Text>
+        </Animated.View>
+      ))}
+    </View>
+  );
+}
 
 // ── Slide content ─────────────────────────────────────────────────────────────
 
@@ -149,10 +316,15 @@ export default function Onboarding() {
       >
         <Animated.View style={[s.slideWrap, { opacity: fadeAnim }]}>
 
-          {/* Emoji illustration */}
-          <View style={[s.emojiWrap, { backgroundColor: colors.accentSoft }]}>
-            <Text style={s.emoji}>{slide.emoji}</Text>
-          </View>
+          {/* Illustration — animated for first 3 slides, static emoji otherwise */}
+          {slide.key === "welcome" && <WelcomeIllustration colors={colors} />}
+          {slide.key === "how"     && <HowIllustration     colors={colors} />}
+          {slide.key === "types"   && <TypesIllustration   colors={colors} />}
+          {slide.key !== "welcome" && slide.key !== "how" && slide.key !== "types" && (
+            <View style={[s.emojiWrap, { backgroundColor: colors.accentSoft }]}>
+              <Text style={s.emoji}>{slide.emoji}</Text>
+            </View>
+          )}
 
           {/* Step dots */}
           <StepDots count={SLIDES.length} current={step} colors={colors} />
@@ -160,39 +332,6 @@ export default function Onboarding() {
           {/* Text */}
           <Text style={[s.title, { color: colors.textPrimary }]}>{slide.title}</Text>
           <Text style={[s.body, { color: colors.textSecondary }]}>{slide.body}</Text>
-
-          {/* Feature highlights — types slide */}
-          {slide.key === "types" && (
-            <View style={s.highlightsWrap}>
-              <View style={[s.highlight, { backgroundColor: colors.fixedBg, borderColor: colors.border }]}>
-                <Text style={s.highlightIcon}>🔒</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.highlightTitle, { color: colors.textPrimary }]}>Fixed</Text>
-                  <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
-                    Rent, mortgage, insurance, subscriptions — must always be filled
-                  </Text>
-                </View>
-              </View>
-              <View style={[s.highlight, { backgroundColor: colors.flexibleBg, borderColor: colors.border }]}>
-                <Text style={s.highlightIcon}>🎯</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.highlightTitle, { color: colors.flexible }]}>Flexible</Text>
-                  <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
-                    Dining, entertainment, travel — spend freely within your limit
-                  </Text>
-                </View>
-              </View>
-              <View style={[s.highlight, { backgroundColor: colors.successBg, borderColor: colors.border }]}>
-                <Text style={s.highlightIcon}>📈</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.highlightTitle, { color: colors.success }]}>Savings</Text>
-                  <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
-                    Holiday, emergency fund, car — grows with a fixed contribution each pay
-                  </Text>
-                </View>
-              </View>
-            </View>
-          )}
 
           {/* Feature highlights — allocation slide */}
           {slide.key === "allocation" && (
@@ -466,4 +605,61 @@ const dots = StyleSheet.create({
     height: 8,
     borderRadius: 4,
   },
+});
+
+// ── Animation styles ──────────────────────────────────────────────────────────
+
+const anim = StyleSheet.create({
+  canvas: {
+    width: 200,
+    height: 160,
+    position: "relative",
+    alignSelf: "center",
+  },
+  bank: {
+    position: "absolute",
+    left: 65,
+    top: 40,
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  bankEmoji: { fontSize: 32 },
+  bill: {
+    position: "absolute",
+    fontSize: 26,
+  },
+  envelope: {
+    position: "absolute",
+    width: 62,
+    height: 36,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 2,
+  },
+  envLabel: {
+    fontSize: 9,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+});
+
+const typeEnv = StyleSheet.create({
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    borderRadius: radius.lg,
+    borderWidth: 1.5,
+    padding: spacing.md,
+  },
+  icon: { fontSize: 22 },
+  label: { fontSize: typography.md, fontWeight: typography.bold },
+  sub:   { fontSize: typography.sm, marginTop: 1 },
+  money: { fontSize: 18, letterSpacing: -4 },
 });
