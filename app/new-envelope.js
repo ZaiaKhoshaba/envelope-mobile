@@ -17,8 +17,23 @@ import { useRouter } from "expo-router";
 import { useBudget } from "../context/BudgetContext";
 import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
 
-const FREQUENCIES = ["weekly", "fortnightly", "monthly"];
-const DAYS_OF_WEEK = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const FREQUENCIES = [
+  { key: "weekly",      label: "Weekly" },
+  { key: "fortnightly", label: "Fortnightly" },
+  { key: "monthly",     label: "Monthly" },
+  { key: "quarterly",   label: "Quarterly" },
+  { key: "half-yearly", label: "6-monthly" },
+  { key: "yearly",      label: "Yearly" },
+];
+const FREQ_KEYS      = FREQUENCIES.map(f => f.key);
+const LONG_PERIODS   = ["quarterly", "half-yearly", "yearly"];
+const DAYS_OF_WEEK   = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const MONTHS         = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const PERIODS_PER_YEAR = { weekly: 52, fortnightly: 26, monthly: 12, quarterly: 4, "half-yearly": 2, yearly: 1 };
+
+function monthlyEquivalent(amount, frequency) {
+  return ((amount || 0) * (PERIODS_PER_YEAR[frequency] || 12)) / 12;
+}
 
 // ── Emoji picker options ──────────────────────────────────────────────────────
 const EMOJI_OPTIONS = [
@@ -160,10 +175,13 @@ export default function NewEnvelope() {
 
   const handleFrequencyChange = (freq) => {
     setTargetFrequency(freq);
-    if (freq === "weekly" && !DAYS_OF_WEEK.includes(targetDate)) {
+    if (freq === "weekly") {
       setTargetDate("Mon");
-    } else if (freq !== "weekly" && DAYS_OF_WEEK.includes(targetDate)) {
-      setTargetDate("1");
+    } else if (LONG_PERIODS.includes(freq)) {
+      // Default to January for long-period due month
+      if (DAYS_OF_WEEK.includes(targetDate) || Number(targetDate) > 12) setTargetDate("1");
+    } else {
+      if (DAYS_OF_WEEK.includes(targetDate)) setTargetDate("1");
     }
   };
 
@@ -216,6 +234,12 @@ export default function NewEnvelope() {
       if (targetFrequency === "weekly") {
         if (!DAYS_OF_WEEK.includes(targetDate)) {
           Alert.alert("Due day required", "Please select which day of the week this expense is due.");
+          return;
+        }
+      } else if (LONG_PERIODS.includes(targetFrequency)) {
+        const monthNum = Number(targetDate || 0);
+        if (isNaN(monthNum) || monthNum < 1 || monthNum > 12) {
+          Alert.alert("Due month required", "Please select which month this expense is due.");
           return;
         }
       } else {
@@ -468,15 +492,35 @@ export default function NewEnvelope() {
         {/* ── Budget frequency (fixed / flexible only) ── */}
         {type !== "savings" && (
           <Field label="Budget frequency" hint={type === "flexible" ? "optional" : null}>
-            <View style={{ marginTop: spacing.xs }}>
-              <SegmentedControl
-                options={FREQUENCIES}
-                value={targetFrequency}
-                onChange={handleFrequencyChange}
-                colors={colors}
-                labelFn={capitalize}
-              />
+            <View style={[freqGrid.wrap, { marginTop: spacing.xs }]}>
+              {FREQUENCIES.map(({ key, label }) => {
+                const active = targetFrequency === key;
+                return (
+                  <TouchableOpacity
+                    key={key}
+                    style={[freqGrid.btn, {
+                      backgroundColor: active ? colors.accent : colors.cardAlt,
+                      borderColor:     active ? colors.accent : colors.border,
+                    }]}
+                    onPress={() => handleFrequencyChange(key)}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={[freqGrid.text, { color: active ? "#fff" : colors.textSecondary }]}>
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
+            {/* Per-month saving hint for long-period frequencies */}
+            {LONG_PERIODS.includes(targetFrequency) && Number(targetBudget) > 0 && (
+              <View style={[tip.wrap, { backgroundColor: colors.accentSoft, borderColor: colors.accent, marginTop: spacing.sm }]}>
+                <Text style={tip.icon}>💡</Text>
+                <Text style={[tip.text, { color: colors.accent }]}>
+                  We'll automatically save ${monthlyEquivalent(Number(targetBudget), targetFrequency).toFixed(2)}/month towards this so it's ready when due.
+                </Text>
+              </View>
+            )}
           </Field>
         )}
 
@@ -510,8 +554,40 @@ export default function NewEnvelope() {
           </Field>
         )}
 
+        {/* ── Due month (quarterly / half-yearly / yearly) ── */}
+        {type !== "savings" && LONG_PERIODS.includes(targetFrequency) && (
+          <Field
+            label="Due month"
+            hint={type === "fixed" ? "required" : "optional"}
+            hintRequired={type === "fixed"}
+          >
+            <View style={[dayPicker.row, { marginTop: spacing.xs, flexWrap: "wrap" }]}>
+              {MONTHS.map((month, idx) => {
+                const monthNum = String(idx + 1);
+                const active = targetDate === monthNum;
+                return (
+                  <TouchableOpacity
+                    key={month}
+                    style={[dayPicker.btn, {
+                      backgroundColor: active ? colors.accent : colors.cardAlt,
+                      borderColor:     active ? colors.accent : colors.border,
+                      minWidth: 48,
+                    }]}
+                    onPress={() => setTargetDate(monthNum)}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={[dayPicker.text, { color: active ? "#fff" : colors.textSecondary }]}>
+                      {month}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </Field>
+        )}
+
         {/* ── Due date (monthly / fortnightly) ── */}
-        {type !== "savings" && targetFrequency !== "weekly" && (
+        {type !== "savings" && !LONG_PERIODS.includes(targetFrequency) && targetFrequency !== "weekly" && (
           <Field
             label="Due date"
             hint={type === "fixed" ? "day of month (1–31) · required" : "day of month (1–31) · optional"}
@@ -825,6 +901,19 @@ const roll = StyleSheet.create({
   },
   label: { fontSize: typography.md, fontWeight: typography.semibold, marginBottom: 2 },
   sub:   { fontSize: typography.sm, lineHeight: 18 },
+});
+
+const freqGrid = StyleSheet.create({
+  wrap: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
+  btn: {
+    width: "31%",
+    paddingVertical: spacing.sm + 2,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  text: { fontSize: typography.xs, fontWeight: typography.bold },
 });
 
 const dayPicker = StyleSheet.create({
