@@ -101,6 +101,7 @@ export default function EditEnvelope() {
   const [targetBudget,      setTargetBudget]      = useState(env?.target          ? String(env.target) : "");
   const [targetFrequency,   setTargetFrequency]   = useState(env?.targetFrequency ?? "monthly");
   const [targetDate,        setTargetDate]        = useState(env?.targetDate      ?? "1");
+  const [targetDay,         setTargetDay]         = useState(env?.targetDay       ?? "1");
   const [rollover,          setRollover]          = useState(env?.rollover        ?? false);
   const [emojiPickerOpen,   setEmojiPickerOpen]   = useState(false);
   // Savings-specific
@@ -191,6 +192,11 @@ export default function EditEnvelope() {
           Alert.alert("Due month required", "Please select which month this expense is due.");
           return;
         }
+        const dayNum = Number(targetDay || 0);
+        if (isNaN(dayNum) || dayNum < 1 || dayNum > 31) {
+          Alert.alert("Due day required", "Please enter the day of the month this expense is due (1–31).");
+          return;
+        }
       } else {
         const dateNum = Number(targetDate || 0);
         if (isNaN(dateNum) || dateNum < 1 || dateNum > 31) {
@@ -216,6 +222,7 @@ export default function EditEnvelope() {
       target: targetNum,
       targetFrequency: (type === "fixed" || targetBudget) ? targetFrequency : null,
       targetDate: resolvedDate,
+      targetDay: LONG_PERIODS.includes(targetFrequency) ? String(Number(targetDay) || 1) : null,
       contributionAmount: 0,
       contributionPct: 0,
       goalAmount: null,
@@ -453,36 +460,52 @@ export default function EditEnvelope() {
           </Field>
         )}
 
-        {/* ── Due month (quarterly / half-yearly / yearly) ── */}
+        {/* ── Due month + day (quarterly / half-yearly / yearly) ── */}
         {type !== "savings" && LONG_PERIODS.includes(targetFrequency) && (
-          <Field
-            label="Due month"
-            hint={type === "fixed" ? "required" : "optional"}
-            hintRequired={type === "fixed"}
-          >
-            <View style={[dayPicker.row, { marginTop: spacing.xs, flexWrap: "wrap" }]}>
-              {MONTHS.map((month, idx) => {
-                const monthNum = String(idx + 1);
-                const active = targetDate === monthNum;
-                return (
-                  <TouchableOpacity
-                    key={month}
-                    style={[dayPicker.btn, {
-                      backgroundColor: active ? colors.accent : colors.cardAlt,
-                      borderColor:     active ? colors.accent : colors.border,
-                      minWidth: 48,
-                    }]}
-                    onPress={() => setTargetDate(monthNum)}
-                    activeOpacity={0.75}
-                  >
-                    <Text style={[dayPicker.text, { color: active ? "#fff" : colors.textSecondary }]}>
-                      {month}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </Field>
+          <>
+            <Field
+              label="Due month"
+              hint={type === "fixed" ? "required" : "optional"}
+              hintRequired={type === "fixed"}
+            >
+              <View style={monthGrid.wrap}>
+                {MONTHS.map((month, idx) => {
+                  const monthNum = String(idx + 1);
+                  const active = targetDate === monthNum;
+                  return (
+                    <TouchableOpacity
+                      key={month}
+                      style={[monthGrid.btn, {
+                        backgroundColor: active ? colors.accent : colors.cardAlt,
+                        borderColor:     active ? colors.accent : colors.border,
+                      }]}
+                      onPress={() => setTargetDate(monthNum)}
+                      activeOpacity={0.75}
+                    >
+                      <Text style={[monthGrid.text, { color: active ? "#fff" : colors.textSecondary }]}>
+                        {month}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </Field>
+            <Field
+              label="Due day"
+              hint={type === "fixed" ? "day of month (1–31) · required" : "day of month (1–31) · optional"}
+              hintRequired={type === "fixed"}
+            >
+              <TextInput
+                style={[s.input, { marginTop: spacing.xs }]}
+                placeholder="e.g. 15 for the 15th"
+                placeholderTextColor={colors.textMuted}
+                keyboardType="number-pad"
+                value={targetDay}
+                onChangeText={setTargetDay}
+                returnKeyType="done"
+              />
+            </Field>
+          </>
         )}
 
         {/* ── Due date (monthly / fortnightly) ── */}
@@ -747,6 +770,20 @@ const roll = StyleSheet.create({
   },
   label: { fontSize: typography.md, fontWeight: typography.semibold, marginBottom: 2 },
   sub:   { fontSize: typography.sm, lineHeight: 18 },
+});
+
+const monthGrid = StyleSheet.create({
+  wrap: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs, marginTop: spacing.xs },
+  btn: {
+    width: "14%",
+    minWidth: 44,
+    paddingVertical: spacing.sm + 2,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  text: { fontSize: typography.xs, fontWeight: typography.bold },
 });
 
 const freqGrid = StyleSheet.create({

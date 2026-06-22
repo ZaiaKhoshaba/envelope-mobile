@@ -50,15 +50,14 @@ function getEnvelopeDueDate(env) {
     return d;
   }
 
-  // Quarterly / half-yearly / yearly: targetDate is a month number (1–12)
+  // Quarterly / half-yearly / yearly: targetDate = month (1–12), targetDay = day (1–31)
   const periodMonths = LONG_PERIOD_MONTHS[targetFrequency];
   if (periodMonths) {
     const dueMonth = Number(targetDate);
+    const dueDay   = Number(env.targetDay || 1);
     if (!dueMonth || dueMonth < 1 || dueMonth > 12) return null;
-    // Find the next occurrence of that month in the current or future year
-    let d = new Date(now.getFullYear(), dueMonth - 1, 1);
-    // If this occurrence is in the past, jump forward by periodMonths
-    while (d <= now) d = new Date(d.getFullYear(), d.getMonth() + periodMonths, 1);
+    let d = new Date(now.getFullYear(), dueMonth - 1, dueDay);
+    while (d <= now) d = new Date(d.getFullYear(), d.getMonth() + periodMonths, dueDay);
     return d;
   }
 
