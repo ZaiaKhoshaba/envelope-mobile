@@ -1,0 +1,59 @@
+name: Security scan
+
+# Active vulnerability scanning of dependencies.
+# - Runs on every push/PR to main AND on a weekly schedule (not ad-hoc).
+# - The npm-audit job needs no external account and produces a dated log
+#   in the Actions tab = evidence the scan is operating.
+# - The Snyk job activates automatically once a SNYK_TOKEN secret is added
+#   (Settings → Secrets and variables → Actions). Until then it skips cleanly.
+#
+# Note: this is an Expo / React Native app with a large dev-only dependency
+# tree. The gating audit runs at "critical" (advisories that reach the shipped
+# app); the full high-level report is printed for review without failing CI.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  schedule:
+    - cron: "0 22 * * 0"   # every Sunday 22:00 UTC (Mon ~08:00 AEST)
+  workflow_dispatch:        # allow manual runs for on-demand evidence
+
+jobs:
+  npm-audit:
+    name: npm audit (dependency vulnerabilities)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Full audit report (review only, non-blocking)
+        run: npm audit --audit-level=high || true
+      - name: Fail on critical advisories
+        run: npm audit --audit-level=critical
+
+  snyk:
+    name: Snyk (opens when SNYK_TOKEN is set)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect Snyk token
+        id: gate
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          if [ -n "$SNYK_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "SNYK_TOKEN not set — skipping Snyk. Add it in repo Settings to enable."
+          fi
+      - name: Run Snyk test
+        if: steps.gate.outputs.enabled == 'true'
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high

@@ -1,0 +1,27 @@
+# Dependabot — automated dependency vulnerability scanning + updates.
+# Free, GitHub-native, runs on GitHub's infrastructure. Once this file is on
+# the default branch, Dependabot opens PRs for outdated/vulnerable packages
+# and records every scan in the repo's Security tab (evidence it is operating).
+#
+# ALSO enable, in the GitHub repo UI (one-time):
+#   Settings → Code security → Dependabot alerts:            ON
+#   Settings → Code security → Dependabot security updates:  ON
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "security"
+    commit-message:
+      prefix: "deps"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
