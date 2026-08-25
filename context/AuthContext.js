@@ -8,25 +8,40 @@ import React, {
   useRef,
 } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as SecureStore from "../lib/secureStorage";
 import { AppState, Platform } from "react-native";
-import { fsSet, fsMerge, fsIncrement } from "../lib/firestore-rest";
 import {
   getRememberMe,
   setRememberMe,
   isPinEnabled,
   savePin,
-  getPin,
+  verifyPinHash,
   clearPin,
   recordBgTime,
   popBgTime,
 } from "../lib/pinStorage";
 
+// Session lives in the device keychain/keystore, not plain AsyncStorage.
+const SESSION_KEY        = "tend_auth_session";
+const LEGACY_SESSION_KEY = "authSession"; // old AsyncStorage location — migrated on startup
+
 const BASE_URL =
   process.env.EXPO_PUBLIC_BANK_BACKEND_URL || "https://envelope-bank-backend.onrender.com";
 
-const LOCK_TIMEOUT_MS = 45 * 1000; // 45 seconds
+// Lock the app when it has been in the background for longer than this
+const LOCK_TIMEOUT_MS = 45 * 1000;
 
 const AuthContext = createContext(null);
+
+// Fire-and-forget "user is active" ping to our own backend.
+// Replaces the old client→Firestore tracking (no third-party services).
+function pingActive(token) {
+  if (!token) return;
+  fetch(`${BASE_URL}/track/active`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  }).catch(() => {});
+}
 
 export function AuthProvider({ children }) {
   const [user,       setUser]       = useState(null);
@@ -38,6 +53,7 @@ export function AuthProvider({ children }) {
 
   const appStateRef = useRef(AppState.currentState);
   const userRef     = useRef(null);
+  const tokenRef    = useRef(null);
 
   // ── Persist session to AsyncStorage ──────────────────────────────────────────
 
@@ -45,8 +61,8 @@ export function AuthProvider({ children }) {
     setUser(userObj);
     setToken(tokenStr);
     try {
-      await AsyncStorage.setItem(
-        "authSession",
+      await SecureStore.setItemAsync(
+        SESSION_KEY,
         JSON.stringify({ user: userObj, token: tokenStr })
       );
     } catch (e) {
@@ -59,25 +75,37 @@ export function AuthProvider({ children }) {
     setToken(null);
     setIsLocked(false);
     try {
-      await AsyncStorage.removeItem("authSession");
+      await SecureStore.deleteItemAsync(SESSION_KEY);
+      await AsyncStorage.removeItem(LEGACY_SESSION_KEY);
     } catch (e) {
       console.log("Auth clear error", e);
     }
   }, []);
 
-  // Keep ref in sync so AppState listener always sees current auth state
-  useEffect(() => { userRef.current = user; }, [user]);
+  // Keep refs in sync so AppState listener always sees current auth state
+  useEffect(() => { userRef.current  = user;  }, [user]);
+  useEffect(() => { tokenRef.current = token; }, [token]);
 
   // ── Startup: restore session only when rememberMe = true ─────────────────────
 
   useEffect(() => {
     (async () => {
       try {
-        const [stored, remembered, pinOn] = await Promise.all([
-          AsyncStorage.getItem("authSession"),
+        let [stored, remembered, pinOn] = await Promise.all([
+          SecureStore.getItemAsync(SESSION_KEY),
           getRememberMe(),
           isPinEnabled(),
         ]);
+
+        // Migrate a legacy AsyncStorage session into the keychain, then wipe it
+        if (!stored) {
+          const legacy = await AsyncStorage.getItem(LEGACY_SESSION_KEY);
+          if (legacy) {
+            stored = legacy;
+            await SecureStore.setItemAsync(SESSION_KEY, legacy).catch(() => {});
+            await AsyncStorage.removeItem(LEGACY_SESSION_KEY).catch(() => {});
+          }
+        }
 
         setPinEnabled(pinOn);
 
@@ -116,10 +144,7 @@ export function AuthProvider({ children }) {
           setIsLocked(true);
         }
         // Record activity whenever app comes to foreground
-        if (userRef.current) {
-          const uid = String(userRef.current.id);
-          fsMerge("users", uid, { lastActive: new Date() }).catch(() => {});
-        }
+        if (userRef.current) pingActive(tokenRef.current);
       }
     });
 
@@ -129,7 +154,7 @@ export function AuthProvider({ children }) {
   // ── Auth actions ─────────────────────────────────────────────────────────────
 
   const register = useCallback(
-    async (email, password, firstName, surname, dateOfBirth, gender) => {
+    async (email, password, firstName, surname) => {
       setError(null);
       const delays = [0, 8000, 20000];
       for (let attempt = 0; attempt < delays.length; attempt++) {
@@ -138,7 +163,7 @@ export function AuthProvider({ children }) {
           const resp = await fetch(`${BASE_URL}/auth/register`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email, password, firstName, surname, dateOfBirth, gender }),
+            body: JSON.stringify({ email, password, firstName, surname, platform: Platform.OS }),
           });
 
           const json = await resp.json();
@@ -157,19 +182,6 @@ export function AuthProvider({ children }) {
           // Always remember after registration — user only hits login again via logout
           await setRememberMe(true);
           await persistSession(json.user, json.token);
-
-          // Mirror to Firestore — background
-          const uid = String(json.user.id);
-          fsSet("users", uid, {
-            email,
-            name: `${firstName} ${surname}`,
-            firstName,
-            createdAt: new Date(),
-            lastLogin: new Date(),
-            loginCount: 1,
-            subscriptionStatus: "trial",
-            platform: Platform.OS,
-          }).catch(e => console.log("Firestore register error:", e.message));
 
           return { ok: true };
         } catch (e) {
@@ -223,13 +235,6 @@ export function AuthProvider({ children }) {
             setToken(json.token);
           }
 
-          // Mirror to Firestore — background
-          const uid = String(json.user.id);
-          Promise.all([
-            fsMerge("users", uid, { lastLogin: new Date(), email }),
-            fsIncrement("users", uid, "loginCount"),
-          ]).catch(e => console.log("Firestore login error:", e.message));
-
           return { ok: true };
         } catch (e) {
           console.log(`login attempt ${attempt + 1} error:`, e.message);
@@ -265,17 +270,12 @@ export function AuthProvider({ children }) {
   }, []);
 
   const verifyPin = useCallback(async (pin) => {
-    const stored = await getPin();
-    return stored === pin;
+    return verifyPinHash(pin);
   }, []);
 
   const unlock = useCallback(() => {
     setIsLocked(false);
-    if (userRef.current) {
-      const uid = String(userRef.current.id);
-      fsMerge("users", uid, { lastActive: new Date() })
-        .catch(() => {});
-    }
+    if (userRef.current) pingActive(tokenRef.current);
   }, []);
 
   // ── Context value ─────────────────────────────────────────────────────────────

@@ -20,8 +20,6 @@ import { useTheme, spacing, radius, typography } from "../theme";
 // Update this once your GitHub Pages privacy policy is live
 const PRIVACY_POLICY_URL = "https://zaiakhoshaba.github.io/tend-privacy-policy/";
 
-const GENDERS = ["Male", "Female"];
-
 export default function RegisterScreen() {
   const { register, loading, error, setError } = useAuth();
   const { colors } = useTheme();
@@ -31,32 +29,12 @@ export default function RegisterScreen() {
   const [surname,     setSurname]     = useState("");
   const [email,       setEmail]       = useState("");
   const [password,    setPassword]    = useState("");
-  const [dob,         setDob]         = useState("");   // DD/MM/YYYY
-  const [gender,      setGender]      = useState("");
   const [showPass,    setShowPass]    = useState(false);
   const [submitting,  setSubmitting]  = useState(false);
 
   // No redirect effect here — onSubmit handles navigation to /onboarding after
   // a successful registration. Having both an effect and onSubmit navigate at the
   // same time causes a race condition / crash.
-
-  const formatDob = (text) => {
-    // Auto-insert slashes: 12/05/1990
-    const digits = text.replace(/\D/g, "").slice(0, 8);
-    if (digits.length <= 2) return digits;
-    if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
-    return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
-  };
-
-  const validateDob = (val) => {
-    if (!val) return true; // optional
-    const parts = val.split("/");
-    if (parts.length !== 3) return false;
-    const [d, m, y] = parts.map(Number);
-    if (!d || !m || !y || y < 1900 || y > new Date().getFullYear()) return false;
-    if (m < 1 || m > 12 || d < 1 || d > 31) return false;
-    return true;
-  };
 
   const onSubmit = async () => {
     const fn = firstName.trim();
@@ -68,12 +46,9 @@ export default function RegisterScreen() {
     if (!em)  { setError?.("Email is required."); return; }
     if (!password) { setError?.("Password is required."); return; }
     if (password.length < 8) { setError?.("Password must be at least 8 characters."); return; }
-    if (!dob)               { setError?.("Date of birth is required."); return; }
-    if (!validateDob(dob)) { setError?.("Enter a valid date of birth (DD/MM/YYYY)."); return; }
-    if (!gender)           { setError?.("Please select your gender."); return; }
 
     setSubmitting(true);
-    const res = await register(em, password, fn, sn, dob, gender);
+    const res = await register(em, password, fn, sn);
     setSubmitting(false);
     if (res.ok) {
       router.replace("/onboarding");
@@ -213,44 +188,6 @@ export default function RegisterScreen() {
                   </Text>
                 </View>
               )}
-            </View>
-
-            {/* Date of birth */}
-            <View style={s.fieldWrap}>
-              <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>Date of birth</Text>
-              <TextInput
-                style={[s.input, { backgroundColor: colors.cardAlt, borderColor: colors.border, color: colors.textPrimary }]}
-                placeholder="DD/MM/YYYY"
-                placeholderTextColor={colors.textMuted}
-                keyboardType="numeric"
-                value={dob}
-                onChangeText={t => { setDob(formatDob(t)); clearErr(); }}
-                maxLength={10}
-                returnKeyType="next"
-              />
-            </View>
-
-            {/* Gender */}
-            <View style={s.fieldWrap}>
-              <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>Gender</Text>
-              <View style={s.genderRow}>
-                {GENDERS.map(g => (
-                  <TouchableOpacity
-                    key={g}
-                    style={[
-                      s.genderPill,
-                      { borderColor: gender === g ? colors.accent : colors.border,
-                        backgroundColor: gender === g ? colors.accentSoft : colors.cardAlt },
-                    ]}
-                    onPress={() => setGender(prev => prev === g ? "" : g)}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={[s.genderText, { color: gender === g ? colors.accent : colors.textSecondary }]}>
-                      {g}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
             </View>
 
             {/* Submit */}
@@ -409,22 +346,6 @@ const s = StyleSheet.create({
     fontWeight: typography.semibold,
     minWidth: 52,
     textAlign: "right",
-  },
-
-  genderRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.xs,
-  },
-  genderPill: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs + 2,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-  },
-  genderText: {
-    fontSize: typography.sm,
-    fontWeight: typography.medium,
   },
 
   primaryBtn: {

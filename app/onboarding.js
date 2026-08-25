@@ -16,14 +16,11 @@ import {
   TouchableOpacity,
   SafeAreaView,
   ScrollView,
-  Dimensions,
   Animated,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useTheme, spacing, radius, typography } from "../theme";
 import { usePurchase, PLANS } from "../context/PurchaseContext";
-
-const { width: SCREEN_W } = Dimensions.get("window");
 
 // ── Slide content ─────────────────────────────────────────────────────────────
 

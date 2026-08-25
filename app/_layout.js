@@ -1,5 +1,5 @@
 // app/_layout.js
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import {
   Modal,
   View,
@@ -15,6 +15,7 @@ import { StatusBar } from "expo-status-bar";
 
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
+import * as LocalAuthentication from "expo-local-authentication";
 import { AuthProvider, useAuth } from "../context/AuthContext";
 import { BudgetProvider, useBudget } from "../context/BudgetContext";
 import { PurchaseProvider, usePurchase } from "../context/PurchaseContext";
@@ -127,9 +128,48 @@ function PinLockModal() {
   const router = useRouter();
   const { colors } = useTheme();
 
-  const [current,  setCurrent]  = useState("");
-  const [errMsg,   setErrMsg]   = useState("");
+  const [current,     setCurrent]     = useState("");
+  const [errMsg,      setErrMsg]      = useState("");
+  const [bioAvailable, setBioAvailable] = useState(false);
   const shakeAnim = useRef(new Animated.Value(0)).current;
+
+  // ── Biometric unlock (Face ID / fingerprint) ────────────────────────────────
+  const tryBiometrics = useCallback(async () => {
+    try {
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: "Unlock Tend",
+        cancelLabel:   "Use PIN",
+        disableDeviceFallback: true, // PIN pad below is our fallback
+      });
+      if (result.success) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        unlock();
+        setCurrent("");
+      }
+    } catch {
+      // Fall through to PIN entry
+    }
+  }, [unlock]);
+
+  useEffect(() => {
+    if (!isLocked) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [hasHardware, enrolled] = await Promise.all([
+          LocalAuthentication.hasHardwareAsync(),
+          LocalAuthentication.isEnrolledAsync(),
+        ]);
+        if (cancelled) return;
+        const available = hasHardware && enrolled;
+        setBioAvailable(available);
+        if (available) tryBiometrics(); // prompt immediately on lock
+      } catch {
+        if (!cancelled) setBioAvailable(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isLocked, tryBiometrics]);
 
   const shake = () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -209,6 +249,19 @@ function PinLockModal() {
           )}
 
           <PinPad onKey={handleKey} colors={colors} />
+
+          {bioAvailable && (
+            <TouchableOpacity
+              style={[lock.bioBtn, { borderColor: colors.accent }]}
+              onPress={tryBiometrics}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="finger-print" size={18} color={colors.accent} />
+              <Text style={[lock.bioText, { color: colors.accent }]}>
+                Use Face ID / fingerprint
+              </Text>
+            </TouchableOpacity>
+          )}
 
           <TouchableOpacity
             style={[lock.logoutBtn, { borderColor: colors.border }]}
@@ -324,7 +377,6 @@ function InnerLayout() {
         <Tabs.Screen name="add-income"      options={{ href: null, title: "Add Income" }} />
         <Tabs.Screen name="add-spend"       options={{ href: null, title: "Add Spend" }} />
         <Tabs.Screen name="bank-connect"    options={{ href: null, headerShown: false }} />
-        <Tabs.Screen name="bank"            options={{ href: null, headerShown: false }} />
         <Tabs.Screen name="cycle"           options={{ href: null, title: "Budget Cycle" }} />
         <Tabs.Screen name="edit-envelope"     options={{ href: null, title: "Edit Envelope" }} />
         <Tabs.Screen name="envelope-detail"  options={{ href: null, title: "Envelope" }} />
@@ -405,6 +457,19 @@ const lock = StyleSheet.create({
     fontSize: typography.sm,
     fontWeight: typography.medium,
     marginTop: -spacing.sm,
+  },
+  bioBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.xl,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+  },
+  bioText: {
+    fontSize: typography.sm,
+    fontWeight: typography.semibold,
   },
   logoutBtn: {
     marginTop: spacing.sm,

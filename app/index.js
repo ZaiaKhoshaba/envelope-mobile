@@ -10,11 +10,11 @@ import {
   SafeAreaView,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { useBudget } from "../context/BudgetContext";
+import { useBudget, buildProportionalPlans } from "../context/BudgetContext";
 import { useAuth } from "../context/AuthContext";
 import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
 import * as Haptics from "expo-haptics";
-import { buildProportionalPlans } from "../context/BudgetContext";
+import { getEnvelopeDueDate, projectedIncomeBeforeDate } from "../lib/budgetMath";
 import { fmt } from "../lib/format";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -29,65 +29,10 @@ function getTimeOfDay() {
 /**
  * For each fixed envelope, calculate its proportional shortfall based on
  * projected income before its due date, split proportionally across all
- * fixed commitments.
+ * fixed commitments. Due-date and forecasting maths live in lib/budgetMath.js.
  *
  * Returns an array of analysis objects — one per fixed envelope with a target.
  */
-const DOW_MAP = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 0 };
-
-const LONG_PERIOD_MONTHS = { quarterly: 3, "half-yearly": 6, yearly: 12 };
-
-function getEnvelopeDueDate(env) {
-  const { targetFrequency, targetDate } = env;
-  if (!targetFrequency || !targetDate) return null;
-  const now = new Date();
-
-  if (targetFrequency === "weekly") {
-    const jsDay = DOW_MAP[targetDate];
-    if (jsDay === undefined) return null;
-    const d = new Date(now);
-    do { d.setDate(d.getDate() + 1); } while (d.getDay() !== jsDay);
-    return d;
-  }
-
-  // Quarterly / half-yearly / yearly: targetDate = month (1–12), targetDay = day (1–31)
-  const periodMonths = LONG_PERIOD_MONTHS[targetFrequency];
-  if (periodMonths) {
-    const dueMonth = Number(targetDate);
-    const dueDay   = Number(env.targetDay || 1);
-    if (!dueMonth || dueMonth < 1 || dueMonth > 12) return null;
-    let d = new Date(now.getFullYear(), dueMonth - 1, dueDay);
-    while (d <= now) d = new Date(d.getFullYear(), d.getMonth() + periodMonths, dueDay);
-    return d;
-  }
-
-  // Monthly / fortnightly: targetDate is day of month
-  const dom = Number(targetDate);
-  if (!dom || dom < 1 || dom > 31) return null;
-  let d = new Date(now.getFullYear(), now.getMonth(), dom);
-  if (d <= now) d = new Date(d.getFullYear(), d.getMonth() + 1, dom);
-  return d;
-}
-
-function projectedIncomeBeforeDate(incomeSchedule, dueDate) {
-  if (!incomeSchedule?.amount || !dueDate) return 0;
-  const { amount, frequency, dayOfMonth, anchorDate } = incomeSchedule;
-  const now = new Date();
-  let count = 0;
-  if (frequency === "weekly" || frequency === "fortnightly") {
-    const interval = frequency === "weekly" ? 7 : 14;
-    let base = anchorDate ? new Date(anchorDate) : new Date();
-    if (isNaN(base.getTime())) base = new Date();
-    while (base <= now) base = new Date(base.getTime() + interval * 86400000);
-    while (base < dueDate) { count++; base = new Date(base.getTime() + interval * 86400000); }
-  } else {
-    const dom = Number(dayOfMonth) || 1;
-    let d = new Date(now.getFullYear(), now.getMonth(), dom);
-    if (d <= now) d = new Date(d.getFullYear(), d.getMonth() + 1, dom);
-    while (d < dueDate) { count++; d = new Date(d.getFullYear(), d.getMonth() + 1, dom); }
-  }
-  return count * amount;
-}
 
 function getProportionalAnalysis(envelopes, incomeSchedule) {
   const fixedEnvs = envelopes.filter(e => e.type === "fixed" && Number(e.target) > 0);
@@ -193,6 +138,32 @@ function EnvelopePreviewRow({ env, colors, analysis }) {
         ${fmt(env.amount)}
       </Text>
     </View>
+  );
+}
+
+// ── Overallocated warning ─────────────────────────────────────────────────────
+// Shown when envelopes hold more money than actually exists — the single most
+// important signal in envelope budgeting. Never hide this.
+
+function OverallocatedWarning({ amount, onPress, colors }) {
+  if (!amount || amount <= 0) return null;
+  return (
+    <TouchableOpacity
+      style={[nudge.wrap, { backgroundColor: colors.dangerBg, borderColor: colors.danger }]}
+      onPress={onPress}
+      activeOpacity={0.8}
+    >
+      <Text style={nudge.icon}>🚨</Text>
+      <View style={{ flex: 1 }}>
+        <Text style={[nudge.title, { color: colors.danger }]}>
+          Budgeted ${fmt(amount)} more than you have
+        </Text>
+        <Text style={[nudge.sub, { color: colors.danger }]}>
+          Your envelopes hold money that isn't in your balance. Move funds out or add income.
+        </Text>
+      </View>
+      <Text style={[nudge.arrow, { color: colors.danger }]}>›</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -442,7 +413,7 @@ function SetupChecklist({ state, router, colors }) {
 export default function Home() {
   const router  = useRouter();
   const { colors, isDark, toggle } = useTheme();
-  const { total, allocated, unallocated, state } = useBudget();
+  const { total, allocated, unallocated, overallocated, state } = useBudget();
   const { isAuthenticated, loading, user } = useAuth();
 
   useEffect(() => {
@@ -526,6 +497,13 @@ export default function Home() {
             }
           />
         </View>
+
+        {/* ── Overallocated warning — never hidden ── */}
+        <OverallocatedWarning
+          amount={overallocated}
+          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push("/envelopes"); }}
+          colors={colors}
+        />
 
         {/* ── Unallocated nudge ── */}
         <UnallocatedNudge

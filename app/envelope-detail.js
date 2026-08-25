@@ -11,7 +11,7 @@ import {
   TouchableOpacity,
   SafeAreaView,
   Alert,
-  Dimensions,
+  useWindowDimensions,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useBudget } from "../context/BudgetContext";
@@ -20,8 +20,6 @@ import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
 import * as Haptics from "expo-haptics";
 import { fmt } from "../lib/format";
 import EnvelopeInsights from "../components/EnvelopeInsights";
-
-const { width: SCREEN_W } = Dimensions.get("window");
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -337,6 +335,11 @@ export default function EnvelopeDetailScreen() {
   const { hasBankAccess } = usePurchase();
   const { colors } = useTheme();
   const s = makeStyles(colors);
+  // Reactive to the current window size — a one-time Dimensions.get() snapshot
+  // goes stale on web when the viewport size at first load differs from the
+  // actual rendered size, causing every page in this pager to be sized wrong
+  // and clipped at both edges.
+  const { width: SCREEN_W } = useWindowDimensions();
 
   const envelopes = state.envelopes;
   const initialIndex = Math.max(0, envelopes.findIndex(e => e.id === id));

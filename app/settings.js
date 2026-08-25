@@ -290,7 +290,7 @@ export default function Settings() {
                 if (result?.ok) {
                   Alert.alert("Mock spend created", "Check the Transactions tab.");
                 } else {
-                  Alert.alert("No envelopes", "Add envelopes with funds before simulating a spend.");
+                  Alert.alert("Unavailable", result?.message || "Add envelopes with funds before simulating a spend.");
                 }
               }}
               right={<Text style={{ color: colors.textMuted, fontSize: 18 }}>›</Text>}

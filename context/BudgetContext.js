@@ -6,15 +6,30 @@ import React, {
   useEffect,
   useMemo,
   useCallback,
+  useRef,
 } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuth } from "./AuthContext";
 import { fmt } from "../lib/format";
+import {
+  round2,
+  newId,
+  buildProportionalPlans,
+  computeTotals,
+  findRuleMatch,
+  ruleKeyFromMerchant,
+} from "../lib/budgetMath";
+
+// Re-export so screens can keep importing from the context module
+export { buildProportionalPlans };
+
+const BACKEND_URL =
+  process.env.EXPO_PUBLIC_BANK_BACKEND_URL || "https://envelope-bank-backend.onrender.com";
 
 const BudgetContext = createContext(null);
 
 /* -----------------------------------------------------------
-   DEFAULT STATE — includes incomeSchedule
+   DEFAULT STATE — includes incomeSchedule + categorisation rules
 ----------------------------------------------------------- */
 const defaultState = {
   envelopes: [],
@@ -22,9 +37,10 @@ const defaultState = {
   total: 0,
   allocated: 0,
   unallocated: 0,
+  overallocated: 0,
   cycle: null,
 
-  // Income schedule for future smart auto-allocation
+  // Income schedule for smart auto-allocation
   incomeSchedule: {
     amount: null,
     frequency: null, // "weekly" | "fortnightly" | "monthly"
@@ -32,6 +48,10 @@ const defaultState = {
     dayOfMonth: null, // 1–31 if monthly
     anchorDate: null, // ISO string
   },
+
+  // Merchant → envelope categorisation rules, learned from user allocations
+  // Shape: { id, match, envelopeId }
+  rules: [],
 
   // Spend waiting to be assigned to an envelope (drives SpendChooserModal)
   // Shape: { id, merchant, amount, remaining, postedAt } | null
@@ -67,11 +87,14 @@ function reducer(state, action) {
         ? incoming.transactions
         : state.transactions;
 
+      const rules = Array.isArray(incoming.rules) ? incoming.rules : state.rules;
+
       return {
         ...state,
         ...incoming,
         envelopes,
         transactions,
+        rules,
       };
     }
 
@@ -145,6 +168,8 @@ function reducer(state, action) {
       return {
         ...state,
         envelopes: state.envelopes.filter((e) => e.id !== action.id),
+        // Rules pointing at a deleted envelope are useless — drop them too
+        rules: state.rules.filter((r) => r.envelopeId !== action.id),
       };
 
     case "ADD_TRANSACTION":
@@ -175,7 +200,21 @@ function reducer(state, action) {
         total: action.total,
         allocated: action.allocated,
         unallocated: action.unallocated,
+        overallocated: action.overallocated,
       };
+
+    // ── Categorisation rules ────────────────────────────────────────────────
+
+    case "ADD_RULE": {
+      const rule = action.rule;
+      if (!rule?.match || !rule?.envelopeId) return state;
+      // Upsert by match key — one rule per merchant
+      const others = state.rules.filter((r) => r.match !== rule.match);
+      return { ...state, rules: [...others, rule] };
+    }
+
+    case "REMOVE_RULE":
+      return { ...state, rules: state.rules.filter((r) => r.id !== action.id) };
 
     // ── Pending spend (drives SpendChooserModal) ────────────────────────────
 
@@ -194,11 +233,32 @@ function reducer(state, action) {
         pendingSpend: action.pendingSpend, // null when fully allocated
       };
 
+    // Adopt a cloud copy while KEEPING this device's imported (CDR) transactions —
+    // they are deliberately never synced, so a remote load must not wipe them.
+    case "ADOPT_REMOTE": {
+      const incoming    = action.payload || {};
+      const incomingTxs = Array.isArray(incoming.transactions) ? incoming.transactions : [];
+      const ids         = new Set(incomingTxs.map((t) => String(t.id)));
+      const keptLocal   = state.transactions.filter(
+        (t) => t.imported && !ids.has(String(t.id))
+      );
+      const mergedTxs = [...incomingTxs, ...keptLocal].sort((a, b) => {
+        const ad = new Date(a.postedAt || 0).getTime();
+        const bd = new Date(b.postedAt || 0).getTime();
+        return bd - ad;
+      });
+      return reducer(state, {
+        type: "LOAD_STATE",
+        payload: { ...incoming, transactions: mergedTxs },
+      });
+    }
+
     case "RESET_ALL":
       return {
         ...defaultState,
         envelopes: [],
         transactions: [],
+        rules: [],
         incomeSchedule: { ...defaultState.incomeSchedule },
         pendingSpend: null,
       };
@@ -209,43 +269,8 @@ function reducer(state, action) {
 }
 
 /* -----------------------------------------------------------
-   HELPER: proportional auto-allocation
-   Every pay is split across fixed envelopes by:
-     envelope.target / totalFixedTarget
-   Each envelope is capped at its own target (won't over-fill).
-   Any surplus beyond targets stays as unallocated funds.
+   HELPER: proportional auto-allocation (see lib/budgetMath.js)
 ----------------------------------------------------------- */
-export function buildProportionalPlans(incomeAmount, envelopes) {
-  // ── Fixed envelopes: proportional fill to target (capped at remaining need) ─
-  const fixedEnvs   = envelopes.filter(e => e.type === "fixed" && Number(e.target) > 0);
-  const totalTarget = fixedEnvs.reduce((sum, e) => sum + Number(e.target), 0);
-
-  const fixedPlans = (totalTarget && incomeAmount)
-    ? fixedEnvs.map(env => {
-        const proportion = Number(env.target) / totalTarget;
-        const gross      = incomeAmount * proportion;
-        const stillNeeds = Math.max(0, Number(env.target) - Number(env.amount || 0));
-        const allocation = Math.min(gross, stillNeeds);
-        return { envId: env.id, proportion, gross, allocation, isSavings: false };
-      }).filter(p => p.allocation > 0.004)
-    : [];
-
-  // ── Savings envelopes: flat contribution added on top of existing balance ──
-  const savingsEnvs  = envelopes.filter(e => e.type === "savings");
-  const savingsPlans = incomeAmount
-    ? savingsEnvs.map(env => {
-        const pct = Number(env.contributionPct    || 0);
-        const amt = Number(env.contributionAmount || 0);
-        let allocation = 0;
-        if (pct > 0)      allocation = Math.round(incomeAmount * (pct / 100) * 100) / 100;
-        else if (amt > 0) allocation = amt;
-        return { envId: env.id, proportion: pct / 100, gross: allocation, allocation, isSavings: true };
-      }).filter(p => p.allocation > 0.004)
-    : [];
-
-  return [...fixedPlans, ...savingsPlans];
-}
-
 function autoAllocateIncome({ incomeAmount, envelopes }) {
   if (!incomeAmount || incomeAmount <= 0) {
     return { envelopes, shortfall: 0 };
@@ -257,7 +282,7 @@ function autoAllocateIncome({ incomeAmount, envelopes }) {
   const updatedEnvelopes = envelopes.map(env => {
     const plan = plans.find(p => p.envId === env.id);
     if (!plan) return env;
-    return { ...env, amount: Math.round(((Number(env.amount) || 0) + plan.allocation) * 100) / 100 };
+    return { ...env, amount: round2((Number(env.amount) || 0) + plan.allocation) };
   });
 
   // shortfall = total still needed across all fixed envelopes after this pay
@@ -265,7 +290,49 @@ function autoAllocateIncome({ incomeAmount, envelopes }) {
     .filter(e => e.type === "fixed" && Number(e.target) > 0)
     .reduce((sum, e) => sum + Math.max(0, Number(e.target) - Number(e.amount)), 0);
 
-  return { envelopes: updatedEnvelopes, shortfall: Math.round(shortfall * 100) / 100 };
+  return { envelopes: updatedEnvelopes, shortfall: round2(shortfall) };
+}
+
+// The slice of state that gets persisted locally.
+// pendingSpend is deliberately excluded (a stale modal shouldn't reappear
+// on another device or after a restart).
+function pickPersisted(state) {
+  return {
+    envelopes:      state.envelopes,
+    transactions:   state.transactions,
+    incomeSchedule: state.incomeSchedule,
+    rules:          state.rules,
+    cycle:          state.cycle,
+  };
+}
+
+// The slice that syncs to the cloud. Bank-imported transactions are
+// CDR-derived data and Tend's compliance posture (Fiskil ISQ Q4, ISP §5.1)
+// is that CDR data is NEVER stored on Tend servers — it lives only on the
+// user's own device. Envelope balances still sync, so budgets stay correct
+// across devices; only the imported transaction records stay device-local.
+function pickCloudPersisted(stateLike) {
+  const base = pickPersisted(stateLike);
+  return {
+    ...base,
+    transactions: (base.transactions || []).filter((t) => !t.imported),
+  };
+}
+
+// Normalise any transaction-ish object (backend, webhook, or legacy shape)
+function normalizeTx(t) {
+  const amount = Number(t.amount || 0);
+  return {
+    id:          String(t.id || newId("bank")),
+    kind:        t.kind || (amount >= 0 ? "income" : "spend"),
+    amount,
+    merchant:    t.merchant || t.counterparty || t.description || "Bank Transaction",
+    description: t.description || t.narrative || t.merchant || "",
+    imported:    true,
+    postedAt:    t.postedAt || t.date || new Date().toISOString(),
+    allocations: Array.isArray(t.allocations) ? t.allocations : [],
+    allocated:   !!t.allocated,
+  };
 }
 
 /* -----------------------------------------------------------
@@ -273,69 +340,131 @@ function autoAllocateIncome({ incomeAmount, envelopes }) {
 ----------------------------------------------------------- */
 export function BudgetProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, defaultState);
-  const { user } = useAuth();
+  const { user, token } = useAuth();
 
-  // Load the correct user's budget whenever they log in or switch accounts.
-  // Resets to empty first so stale data never bleeds across accounts.
+  const tokenRef     = useRef(token);
+  const hydratingRef = useRef(false);
+  const stampRef     = useRef(null);   // ISO stamp of the latest local change
+  const localTimer   = useRef(null);
+  const remoteTimer  = useRef(null);
+
+  useEffect(() => { tokenRef.current = token; }, [token]);
+
+  /* -----------------------------------------------------------
+     CLOUD SYNC — push (debounced)
+  ----------------------------------------------------------- */
+  const pushBudget = useCallback(async (blob, stamp) => {
+    const t = tokenRef.current;
+    if (!t) return;
+    try {
+      const r = await fetch(`${BACKEND_URL}/budget`, {
+        method:  "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+        body:    JSON.stringify({ budget: blob, updatedAt: stamp }),
+      });
+      if (r.status === 401) return; // token expired — sync resumes after next login
+      const j = await r.json().catch(() => null);
+      if (j?.ok && j.stored === false && j.budget) {
+        // Another device holds a newer copy — adopt it (keeps local CDR txs)
+        hydratingRef.current = true;
+        dispatch({ type: "ADOPT_REMOTE", payload: j.budget });
+        stampRef.current = j.updatedAt || stampRef.current;
+        setTimeout(() => { hydratingRef.current = false; }, 0);
+      }
+    } catch {
+      // Offline / backend asleep — the local copy is safe; next change retries
+    }
+  }, []);
+
+  /* -----------------------------------------------------------
+     LOAD — local first, then reconcile with the cloud copy.
+     Last write wins by timestamp.
+  ----------------------------------------------------------- */
   useEffect(() => {
     if (!user?.id) {
       dispatch({ type: "RESET_ALL" });
       return;
     }
+    let cancelled = false;
     (async () => {
+      hydratingRef.current = true;
+      dispatch({ type: "RESET_ALL" }); // never bleed data across accounts
+
+      let local = null;
       try {
-        dispatch({ type: "RESET_ALL" }); // clear any previous user's data immediately
         const saved = await AsyncStorage.getItem(`budgetState_${user.id}`);
-        if (saved) {
-          dispatch({ type: "LOAD_STATE", payload: JSON.parse(saved) });
-        }
+        if (saved) local = JSON.parse(saved);
       } catch (e) {
         console.log("State load error:", e);
       }
-    })();
-  }, [user?.id]);
+      if (local && !cancelled) {
+        dispatch({ type: "LOAD_STATE", payload: local });
+        stampRef.current = local._updatedAt || null;
+      }
 
-  // Persist on every state change — only when a user is logged in
+      // Reconcile with the cloud copy
+      try {
+        const t = tokenRef.current;
+        if (t) {
+          const r = await fetch(`${BACKEND_URL}/budget`, {
+            headers: { Authorization: `Bearer ${t}` },
+          });
+          if (r.ok) {
+            const j = await r.json().catch(() => null);
+            const remoteStamp = j?.updatedAt || null;
+            const localStamp  = local?._updatedAt || null;
+
+            if (j?.budget && (!localStamp || (remoteStamp && remoteStamp > localStamp))) {
+              // Cloud copy is newer (or this is a fresh install) — adopt it,
+              // preserving any device-local imported (CDR) transactions
+              if (!cancelled) {
+                dispatch({ type: "ADOPT_REMOTE", payload: j.budget });
+                stampRef.current = remoteStamp;
+              }
+            } else if (local && localStamp && (!remoteStamp || localStamp > remoteStamp)) {
+              // Local copy is newer — push it up (manual data only, no CDR)
+              pushBudget(pickCloudPersisted(local), localStamp);
+            }
+          }
+        }
+      } catch {
+        // Offline — local copy already loaded
+      }
+
+      if (!cancelled) hydratingRef.current = false;
+    })();
+    return () => { cancelled = true; };
+  }, [user?.id, pushBudget]);
+
+  /* -----------------------------------------------------------
+     PERSIST — local write (short debounce) + cloud push (longer)
+  ----------------------------------------------------------- */
   useEffect(() => {
-    if (!user?.id) return;
-    AsyncStorage.setItem(`budgetState_${user.id}`, JSON.stringify(state));
-  }, [state, user?.id]);
+    if (!user?.id || hydratingRef.current) return;
+
+    const stamp = new Date().toISOString();
+    stampRef.current = stamp;
+    const blob = { ...pickPersisted(state), _updatedAt: stamp };
+
+    clearTimeout(localTimer.current);
+    localTimer.current = setTimeout(() => {
+      AsyncStorage.setItem(`budgetState_${user.id}`, JSON.stringify(blob)).catch(() => {});
+    }, 300);
+
+    clearTimeout(remoteTimer.current);
+    remoteTimer.current = setTimeout(() => {
+      pushBudget(pickCloudPersisted(state), stamp);
+    }, 3000);
+
+    return () => {};
+  }, [state, user?.id, pushBudget]);
 
   /* -----------------------------------------------------------
      COMPUTE TOTALS
   ----------------------------------------------------------- */
   const recomputeTotals = useCallback(() => {
-    const totalIncome = state.transactions.reduce((sum, t) => {
-      if (t.kind === "income") return sum + (Number(t.amount) || 0);
-      return sum;
-    }, 0);
-
-    // Only deduct spends that have been allocated — unallocated spends don't
-    // affect the total until the user assigns them to an envelope, so that
-    // allocating a spend reduces total AND envelope by the same amount,
-    // leaving unallocated unchanged (the correct real-world behaviour).
-    const allocatedSpendTotal = state.transactions.reduce((sum, t) => {
-      if (t.kind === "spend" && t.allocated) {
-        return sum + Math.abs(Number(t.amount) || 0);
-      }
-      return sum;
-    }, 0);
-
-    const envelopeSum = state.envelopes.reduce(
-      (sum, e) => sum + (Number(e.amount) || 0),
-      0
-    );
-
-    const total       = Math.max(0, totalIncome - allocatedSpendTotal);
-    const allocated   = envelopeSum;
-    const unallocated = Math.max(0, total - envelopeSum);
-
-    dispatch({
-      type: "SET_TOTALS",
-      total,
-      allocated,
-      unallocated,
-    });
+    const t = computeTotals(state.envelopes, state.transactions);
+    dispatch({ type: "SET_TOTALS", ...t });
   }, [state.envelopes, state.transactions]);
 
   useEffect(() => {
@@ -352,7 +481,7 @@ export function BudgetProvider({ children }) {
 
   const addIncome = useCallback(
     (amountArg, descriptionArg, dateArg) => {
-      const amount = Number(amountArg || 0);
+      const amount = round2(amountArg);
       if (!amount || Number.isNaN(amount)) {
         return { ok: false, message: "Invalid income amount" };
       }
@@ -360,7 +489,7 @@ export function BudgetProvider({ children }) {
       const postedAt = dateArg || new Date().toISOString();
 
       const tx = {
-        id: `inc_${Date.now()}`,
+        id: newId("inc"),
         kind: "income",
         amount,
         imported: false,
@@ -377,17 +506,14 @@ export function BudgetProvider({ children }) {
       });
 
       dispatch({
-        type: "LOAD_STATE",
-        payload: {
-          ...state,
-          transactions: newTransactions,
-          envelopes: updatedEnvelopes,
-        },
+        type: "ALLOCATE",
+        envelopes: updatedEnvelopes,
+        transactions: newTransactions,
       });
 
       return { ok: true, tx, shortfall };
     },
-    [state]
+    [state.transactions, state.envelopes]
   );
 
   const allocateOutstanding = useCallback(
@@ -397,7 +523,7 @@ export function BudgetProvider({ children }) {
 
       const amountAbs = Math.abs(Number(tx.amount) || 0);
       const existing = (tx.allocations || []).reduce((s, a) => s + (a.used || 0), 0);
-      const remaining = amountAbs - existing;
+      const remaining = round2(amountAbs - existing);
       if (remaining <= 0) return;
 
       const envelopesCopy = [...state.envelopes];
@@ -411,7 +537,7 @@ export function BudgetProvider({ children }) {
       } else {
         const env = envelopesCopy.find((e) => e.id === sourceId);
         if (env) {
-          env.amount = Math.max(0, (Number(env.amount) || 0) - remaining);
+          env.amount = round2(Math.max(0, (Number(env.amount) || 0) - remaining));
           txCopy.allocations.push({ sourceId: env.id, used: remaining });
         }
       }
@@ -429,14 +555,14 @@ export function BudgetProvider({ children }) {
 
   const allocateToEnvelope = useCallback(
     (envelopeId, amountArg) => {
-      const amount = Number(amountArg || 0);
+      const amount = round2(amountArg);
       if (!amount || Number.isNaN(amount)) {
         return { ok: false, message: "Invalid amount" };
       }
 
       const envelopes = state.envelopes.map((env) => {
         if (env.id !== envelopeId) return env;
-        return { ...env, amount: (Number(env.amount) || 0) + amount };
+        return { ...env, amount: round2((Number(env.amount) || 0) + amount) };
       });
 
       dispatch({ type: "SET_ENVELOPES", envelopes });
@@ -464,7 +590,7 @@ export function BudgetProvider({ children }) {
 
   // transferBetweenEnvelopes — move funds from one envelope to another
   const transferBetweenEnvelopes = useCallback((fromId, toId, amount) => {
-    const amt = Math.round(Number(amount) * 100) / 100;
+    const amt = round2(amount);
     if (!amt || amt <= 0) return { ok: false, message: "Invalid amount" };
     if (fromId === toId) return { ok: false, message: "Cannot transfer to the same envelope" };
 
@@ -474,8 +600,8 @@ export function BudgetProvider({ children }) {
     if (Number(from.amount) < amt) return { ok: false, message: "Insufficient balance" };
 
     const updated = state.envelopes.map(e => {
-      if (e.id === fromId) return { ...e, amount: Math.round((Number(e.amount) - amt) * 100) / 100 };
-      if (e.id === toId)   return { ...e, amount: Math.round((Number(e.amount) + amt) * 100) / 100 };
+      if (e.id === fromId) return { ...e, amount: round2(Number(e.amount) - amt) };
+      if (e.id === toId)   return { ...e, amount: round2(Number(e.amount) + amt) };
       return e;
     });
 
@@ -485,13 +611,13 @@ export function BudgetProvider({ children }) {
 
   const addSpend = useCallback(
     (amountArg, merchantArg, dateArg) => {
-      const amount = Math.abs(Number(amountArg || 0));
+      const amount = Math.abs(round2(amountArg));
       if (!amount || Number.isNaN(amount)) {
         return { ok: false, message: "Invalid spend amount" };
       }
 
       const tx = {
-        id:          `spend_${Date.now()}`,
+        id:          newId("spend"),
         kind:        "spend",
         amount:      -amount,           // stored as negative
         merchant:    merchantArg?.trim() || "Manual spend",
@@ -508,16 +634,18 @@ export function BudgetProvider({ children }) {
     [dispatch]
   );
 
+  // Dev-only helper for demoing the spend-allocation flow
   const simulateRandomSpend = useCallback(() => {
+    if (!__DEV__) return { ok: false, message: "Not available." };
     if (state.envelopes.length === 0) {
       return { ok: false, message: "No envelopes available." };
     }
 
     const pick = state.envelopes[Math.floor(Math.random() * state.envelopes.length)];
-    const spendAmt = Math.random() * 40 + 5;
+    const spendAmt = round2(Math.random() * 40 + 5);
 
     const tx = {
-      id: `mock_${Date.now()}`,
+      id: newId("mock"),
       merchant: "Random Spend",
       amount: -spendAmt,
       kind: "spend",
@@ -537,6 +665,20 @@ export function BudgetProvider({ children }) {
   }, [state.envelopes]);
 
   /* -----------------------------------------------------------
+     CATEGORISATION RULES
+  ----------------------------------------------------------- */
+
+  const addRule = useCallback((match, envelopeId) => {
+    const key = ruleKeyFromMerchant(match);
+    if (!key || key.length < 3 || !envelopeId) return;
+    dispatch({ type: "ADD_RULE", rule: { id: newId("rule"), match: key, envelopeId } });
+  }, []);
+
+  const removeRule = useCallback((id) => {
+    dispatch({ type: "REMOVE_RULE", id });
+  }, []);
+
+  /* -----------------------------------------------------------
      PENDING SPEND — drives SpendChooserModal
   ----------------------------------------------------------- */
 
@@ -549,7 +691,7 @@ export function BudgetProvider({ children }) {
   const setPendingSpend = useCallback((tx) => {
     const amount    = Math.abs(Number(tx.amount || 0));
     const alreadyUsed = (tx.allocations || []).reduce((s, a) => s + (Number(a.used) || 0), 0);
-    const remaining = Number((amount - alreadyUsed).toFixed(2));
+    const remaining = round2(amount - alreadyUsed);
 
     if (remaining <= 0) return; // Already fully allocated — nothing to show
 
@@ -575,6 +717,8 @@ export function BudgetProvider({ children }) {
    *  - sourceId === "unallocated" → draws from unallocated pool (no envelope deducted)
    *  - otherwise → deducts from the matching envelope, capped at its balance
    * Clears pendingSpend when remaining hits zero.
+   * When a spend is fully covered by a single envelope, a categorisation rule
+   * is learned so future imports from that merchant allocate automatically.
    * If the transaction is not yet in state.transactions it is inserted automatically.
    */
   const commitSpendPart = useCallback((sourceId) => {
@@ -590,10 +734,10 @@ export function BudgetProvider({ children }) {
       available = env ? Number(env.amount || 0) : 0;
     }
 
-    const used         = Math.min(ps.remaining, Math.max(0, available));
+    const used = round2(Math.min(ps.remaining, Math.max(0, available)));
     if (used <= 0) return; // Source is empty — nothing to do
 
-    const newRemaining = Number((ps.remaining - used).toFixed(2));
+    const newRemaining = round2(ps.remaining - used);
 
     // Deduct from envelope (unallocated is derived so no direct state change needed)
     const envelopesCopy =
@@ -601,25 +745,28 @@ export function BudgetProvider({ children }) {
         ? state.envelopes
         : state.envelopes.map(e =>
             e.id === sourceId
-              ? { ...e, amount: Math.max(0, Number(e.amount || 0) - used) }
+              ? { ...e, amount: round2(Math.max(0, Number(e.amount || 0) - used)) }
               : e
           );
 
     // Update (or create) the transaction record
     const txExists = state.transactions.find(t => t.id === ps.id);
     let transactionsCopy;
+    let finalAllocations;
 
     if (txExists) {
+      finalAllocations = [...(txExists.allocations || []), { sourceId, used }];
       transactionsCopy = state.transactions.map(t => {
         if (t.id !== ps.id) return t;
         return {
           ...t,
-          allocations: [...(t.allocations || []), { sourceId, used }],
+          allocations: finalAllocations,
           allocated:   newRemaining <= 0,
         };
       });
     } else {
       // Transaction arrived via push notification before a sync — insert it now
+      finalAllocations = [{ sourceId, used }];
       const newTx = {
         id:          ps.id,
         kind:        "spend",
@@ -628,7 +775,7 @@ export function BudgetProvider({ children }) {
         description: ps.merchant,
         imported:    true,
         postedAt:    ps.postedAt,
-        allocations: [{ sourceId, used }],
+        allocations: finalAllocations,
         allocated:   newRemaining <= 0,
       };
       transactionsCopy = [...state.transactions, newTx];
@@ -640,121 +787,110 @@ export function BudgetProvider({ children }) {
       transactions: transactionsCopy,
       pendingSpend: newRemaining > 0 ? { ...ps, remaining: newRemaining } : null,
     });
+
+    // ── Learn a categorisation rule ─────────────────────────────────────────
+    // Fully covered from ONE envelope → remember merchant → envelope.
+    if (
+      newRemaining <= 0 &&
+      sourceId !== "unallocated" &&
+      finalAllocations.every(a => a.sourceId === sourceId)
+    ) {
+      const key = ruleKeyFromMerchant(ps.merchant);
+      const generic = ["manual spend", "unknown merchant", "bank transaction", "random spend"];
+      if (key && key.length >= 3 && !generic.includes(key)) {
+        dispatch({ type: "ADD_RULE", rule: { id: newId("rule"), match: key, envelopeId: sourceId } });
+      }
+    }
   }, [state]);
 
   /* -----------------------------------------------------------
-     ✅ FIXED: importBankTransactions writes into state.transactions
-     - uses EXPO_PUBLIC_BANK_BACKEND_URL if present
-     - otherwise imports 40 mock txs
-     - merges + dedupes + sorts newest first
+     BANK IMPORT
+     - accepts a pre-fetched list (bank-connect.js fetches with JWT)
+     - otherwise fetches from the backend itself, authenticated
+     - applies categorisation rules: spends whose merchant matches a
+       rule are auto-allocated when the envelope can fully cover them
   ----------------------------------------------------------- */
-  const importBankTransactions = useCallback(async () => {
+  const importBankTransactions = useCallback(async (prefetched) => {
     try {
-      const base = process.env.EXPO_PUBLIC_BANK_BACKEND_URL || "";
-
       let importedTxs = [];
 
-      // Try real backend if env var exists
-      if (base) {
-        const candidatePaths = [
-          "/import/latest",
-          "/import-latest",
-          "/transactions/import/latest",
-        ];
-
-        for (const p of candidatePaths) {
+      if (Array.isArray(prefetched) && prefetched.length > 0) {
+        importedTxs = prefetched.map(normalizeTx);
+      } else {
+        const t = tokenRef.current;
+        if (t) {
           try {
-            const r = await fetch(`${base}${p}`, { method: "POST" });
+            const r = await fetch(`${BACKEND_URL}/fiskil/transactions`, {
+              method:  "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+              body:    JSON.stringify({ limit: 100 }),
+            });
             const j = await r.json().catch(() => ({}));
-            if (!r.ok) continue;
-
-            const list = Array.isArray(j.transactions)
-              ? j.transactions
-              : Array.isArray(j.data)
-              ? j.data
-              : [];
-
-            importedTxs = list.map((t) => ({
-              id: t.id || `bank_${Date.now()}_${Math.random()}`,
-              kind: t.kind || (Number(t.amount) >= 0 ? "income" : "spend"),
-              amount: Number(t.amount || 0),
-              merchant: t.merchant || t.counterparty || "Bank Transaction",
-              description: t.description || t.narrative || "",
-              imported: true,
-              postedAt: t.postedAt || t.date || new Date().toISOString(),
-              allocations: Array.isArray(t.allocations) ? t.allocations : [],
-              allocated: !!t.allocated,
-            }));
-
-            break;
-          } catch (e) {
-            // try next path
+            if (r.ok && Array.isArray(j.txs)) {
+              importedTxs = j.txs.map(normalizeTx);
+            }
+          } catch {
+            // backend unreachable — fall through
           }
         }
       }
 
-      // Fallback to mock import if backend isn't set or returns 0
-      if (!importedTxs || importedTxs.length === 0) {
-        const merchants = [
-          "Woolworths",
-          "Coles",
-          "BP",
-          "Shell",
-          "Chemist Warehouse",
-          "Uber",
-          "Bunnings",
-          "Kmart",
-          "Target",
-          "Aldi",
-          "McDonald's",
-          "7-Eleven",
-        ];
-
-        importedTxs = Array.from({ length: 40 }).map((_, i) => {
-          const amt = Number((Math.random() * 180 + 5).toFixed(2));
-          const daysAgo = Math.floor(Math.random() * 30);
-          const postedAt = new Date(Date.now() - daysAgo * 86400000).toISOString();
-          return {
-            id: `mock_bank_${Date.now()}_${i}`,
-            kind: "spend",
-            amount: -amt,
-            merchant: merchants[Math.floor(Math.random() * merchants.length)],
-            description: "Imported (mock)",
-            imported: true,
-            postedAt,
-            allocations: [],
-            allocated: false,
-          };
-        });
+      if (importedTxs.length === 0) {
+        return { ok: true, imported: 0, message: "No new transactions found." };
       }
 
-      // Merge (dedupe by id) + sort newest first
+      // Dedupe against existing transactions
       const existing = Array.isArray(state.transactions) ? state.transactions : [];
       const existingIds = new Set(existing.map((t) => String(t.id)));
+      const fresh = importedTxs.filter((t) => !existingIds.has(String(t.id)));
 
-      const merged = [
-        ...importedTxs.filter((t) => !existingIds.has(String(t.id))),
-        ...existing,
-      ];
+      if (fresh.length === 0) {
+        return { ok: true, imported: 0, message: "Already up to date." };
+      }
 
+      // Apply categorisation rules to unallocated spends
+      let envelopes = state.envelopes;
+      let autoCount = 0;
+      const processed = fresh.map(tx => {
+        if (tx.kind !== "spend" || tx.allocated) return tx;
+        const rule = findRuleMatch(state.rules, tx.merchant);
+        if (!rule) return tx;
+        const env = envelopes.find(e => e.id === rule.envelopeId);
+        const amt = Math.abs(tx.amount);
+        if (!env || Number(env.amount) < amt) return tx; // can't fully cover — leave for the user
+        envelopes = envelopes.map(e =>
+          e.id === env.id ? { ...e, amount: round2(Number(e.amount) - amt) } : e
+        );
+        autoCount++;
+        return {
+          ...tx,
+          allocations: [{ sourceId: env.id, used: amt }],
+          allocated:   true,
+          autoAllocated: true,
+        };
+      });
+
+      // Merge + sort newest first
+      const merged = [...processed, ...existing];
       merged.sort((a, b) => {
         const ad = new Date(a.postedAt || a.createdAt || 0).getTime();
         const bd = new Date(b.postedAt || b.createdAt || 0).getTime();
         return bd - ad;
       });
 
-      dispatch({ type: "SET_TRANSACTIONS", transactions: merged });
+      dispatch({ type: "ALLOCATE", envelopes, transactions: merged });
 
       return {
         ok: true,
-        imported: importedTxs.length,
-        message: `Imported ${importedTxs.length} transaction(s).`,
+        imported: fresh.length,
+        autoAllocated: autoCount,
+        message: `Imported ${fresh.length} transaction(s)${autoCount ? ` — ${autoCount} auto-allocated` : ""}.`,
       };
     } catch (e) {
       console.log("importBankTransactions error:", e);
       return { ok: false, imported: 0, message: String(e?.message || e) };
     }
-  }, [state.transactions]);
+  }, [state.transactions, state.envelopes, state.rules]);
 
   const resetAll = useCallback(async () => {
     try {
@@ -764,6 +900,16 @@ export function BudgetProvider({ children }) {
     } catch (e) {
       console.log("Reset storage error:", e);
     }
+    // Wipe the cloud copy too — reset means reset everywhere
+    try {
+      const t = tokenRef.current;
+      if (t) {
+        await fetch(`${BACKEND_URL}/budget`, {
+          method:  "DELETE",
+          headers: { Authorization: `Bearer ${t}` },
+        });
+      }
+    } catch {}
     dispatch({ type: "RESET_ALL" });
   }, [user?.id]);
 
@@ -790,6 +936,11 @@ export function BudgetProvider({ children }) {
       total: state.total,
       allocated: state.allocated,
       unallocated: state.unallocated,
+      overallocated: state.overallocated,
+
+      rules: state.rules,
+      addRule,
+      removeRule,
 
       simulateRandomSpend,
       importBankTransactions,
@@ -812,6 +963,8 @@ export function BudgetProvider({ children }) {
       setIncomeSchedule,
       transferBetweenEnvelopes,
       resetAll,
+      addRule,
+      removeRule,
       simulateRandomSpend,
       importBankTransactions,
       setPendingSpend,
