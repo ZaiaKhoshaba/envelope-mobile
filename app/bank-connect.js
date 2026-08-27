@@ -47,7 +47,7 @@ export default function BankConnectScreen() {
   const [busy, setBusy]           = useState(false);
   const [connected, setConnected] = useState(false);
   const [checking, setChecking]   = useState(true);
-  const { importBankTransactions } = useBudget();
+  const { importBankTransactions, setBankBalance } = useBudget();
   const { hasBankAccess }          = usePurchase();
   const { token }                  = useAuth();
   const { colors }                 = useTheme();
@@ -60,6 +60,18 @@ export default function BankConnectScreen() {
 
   const redirectUri = useMemo(() => Linking.createURL("/bank/callback"), []);
 
+  // Pull the live total balance (summed across all connected accounts) and make
+  // it the app's top-line total, superseding any manual entry.
+  const refreshBalance = useCallback(async () => {
+    try {
+      const r = await fetch(`${BACKEND_URL}/fiskil/balance`, { headers: authHeaders });
+      if (r.ok) {
+        const j = await r.json();
+        if (typeof j.balance === "number") setBankBalance(j.balance);
+      }
+    } catch { /* keep last known balance */ }
+  }, [authHeaders, setBankBalance]);
+
   // Check backend for live connection status on mount
   useEffect(() => {
     if (!hasBankAccess || !token) { setChecking(false); return; }
@@ -68,13 +80,14 @@ export default function BankConnectScreen() {
         const r = await fetch(`${BACKEND_URL}/fiskil/status`, { headers: authHeaders });
         if (r.ok) {
           const j = await r.json();
+          // Trust the backend's explicit answer — it checks the live CDR consent.
+          setConnected(!!j.connected);
           if (j.connected) {
-            setConnected(true);
             await AsyncStorage.setItem(CONNECTED_KEY, "1");
+            refreshBalance();
           } else {
-            // Fall back to cached local state in case backend is cold-starting
-            const cached = await AsyncStorage.getItem(CONNECTED_KEY);
-            setConnected(cached === "1");
+            await AsyncStorage.removeItem(CONNECTED_KEY);
+            setBankBalance(null);
           }
         }
       } catch {
@@ -133,29 +146,51 @@ export default function BankConnectScreen() {
       const { url, fiskilEndUserId } = j;
       if (!url) throw new Error("No consent URL returned from server");
 
-      // Open Fiskil's bank-selection / consent page inside the app
-      const result = await WebBrowser.openAuthSessionAsync(url, redirectUri);
+      // Open the consent page in a browser that SURVIVES app-switching. CommBank
+      // (and many CDR banks) make you jump to their app for an approval code, which
+      // closes openAuthSessionAsync. openBrowserAsync + showInRecents keeps it alive,
+      // so you can switch to the bank app and back. Completion is handled by the
+      // deep-link callback (app/bank/callback.js) and the status poll below.
+      await WebBrowser.openBrowserAsync(url, { showInRecents: true });
 
-      if (result.type === "success" || result.type === "dismiss") {
-        // Whether or not they completed consent, tell the backend we have the end-user ID
+      // Don't trust the browser result — leaving to read an SMS code can return
+      // "dismiss" even mid-flow. Verify the REAL consent status with the backend,
+      // polling a few times since the consent can take a moment to register.
+      let isConnected = false;
+      for (let i = 0; i < 5; i++) {
+        try {
+          const sr = await fetch(`${BACKEND_URL}/fiskil/status`, { headers: authHeaders });
+          if (sr.ok && (await sr.json()).connected) { isConnected = true; break; }
+        } catch { /* backend cold-starting — retry */ }
+        await new Promise((res) => setTimeout(res, 2000));
+      }
+
+      if (isConnected) {
         if (fiskilEndUserId) {
           await fetch(`${BACKEND_URL}/fiskil/connect/complete`, {
             method:  "POST",
             headers: authHeaders,
             body:    JSON.stringify({ fiskilEndUserId }),
-          });
+          }).catch(() => {});
         }
         setConnected(true);
         await AsyncStorage.setItem(CONNECTED_KEY, "1");
+        await refreshBalance();
         Alert.alert("Bank connected", "Your bank account has been linked successfully.");
+      } else {
+        setConnected(false);
+        await AsyncStorage.removeItem(CONNECTED_KEY);
+        Alert.alert(
+          "Not connected yet",
+          "The bank authorization wasn't completed. In the bank's window, finish every step — including entering the SMS code — without switching to another app, then try again."
+        );
       }
-      // type === "cancel" means user closed without completing — do nothing
     } catch (e) {
       Alert.alert("Connection failed", e.message || "Please try again.");
     } finally {
       setBusy(false);
     }
-  }, [authHeaders, redirectUri]);
+  }, [authHeaders, redirectUri, refreshBalance]);
 
   const onImport = useCallback(async () => {
     try {
@@ -175,6 +210,7 @@ export default function BankConnectScreen() {
       });
 
       importBankTransactions(cleaned);
+      await refreshBalance();
       Alert.alert(
         "Import complete",
         `${cleaned.length} transaction${cleaned.length !== 1 ? "s" : ""} imported from the last 7 days.`
@@ -184,7 +220,7 @@ export default function BankConnectScreen() {
     } finally {
       setBusy(false);
     }
-  }, [authHeaders, importBankTransactions]);
+  }, [authHeaders, importBankTransactions, refreshBalance]);
 
   const onDisconnect = useCallback(() => {
     Alert.alert(
@@ -198,11 +234,12 @@ export default function BankConnectScreen() {
           onPress: async () => {
             setConnected(false);
             await AsyncStorage.removeItem(CONNECTED_KEY);
+            setBankBalance(null); // revert the top-line total to manual mode
           },
         },
       ]
     );
-  }, []);
+  }, [setBankBalance]);
 
   if (checking) {
     return (

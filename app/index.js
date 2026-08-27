@@ -1,5 +1,5 @@
 // app/index.js
-import React, { useEffect } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -8,8 +8,10 @@ import {
   TouchableOpacity,
   StatusBar,
   SafeAreaView,
+  RefreshControl,
+  AppState,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import { useBudget, buildProportionalPlans } from "../context/BudgetContext";
 import { useAuth } from "../context/AuthContext";
 import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
@@ -24,6 +26,17 @@ function getTimeOfDay() {
   if (h < 12) return "morning";
   if (h < 17) return "afternoon";
   return "evening";
+}
+
+function timeAgo(ts) {
+  if (!ts) return "just now";
+  const secs = Math.floor((Date.now() - ts) / 1000);
+  if (secs < 45) return "just now";
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins || 1}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }
 
 /**
@@ -413,12 +426,34 @@ function SetupChecklist({ state, router, colors }) {
 export default function Home() {
   const router  = useRouter();
   const { colors, isDark, toggle } = useTheme();
-  const { total, allocated, unallocated, overallocated, state } = useBudget();
+  const { total, allocated, unallocated, overallocated, state, bankBalance, lastBalanceSync, refreshBankBalance } = useBudget();
   const { isAuthenticated, loading, user } = useAuth();
 
   useEffect(() => {
     if (!loading && !isAuthenticated) router.replace("/login");
   }, [loading, isAuthenticated]);
+
+  // Keep the bank balance fresh: pull-to-refresh, on screen focus, and when the
+  // app returns to the foreground (e.g. after a "transactions synced" alert).
+  const [refreshing, setRefreshing] = useState(false);
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await refreshBankBalance();
+    setRefreshing(false);
+  }, [refreshBankBalance]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (bankBalance != null) refreshBankBalance();
+    }, [bankBalance, refreshBankBalance])
+  );
+
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (st) => {
+      if (st === "active" && bankBalance != null) refreshBankBalance();
+    });
+    return () => sub.remove();
+  }, [bankBalance, refreshBankBalance]);
 
   if (loading || !isAuthenticated) return null;
 
@@ -445,6 +480,9 @@ export default function Home() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: 40, gap: spacing.lg }}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} colors={[colors.accent]} />
+        }
       >
 
         {/* ── Header ── */}
@@ -471,6 +509,11 @@ export default function Home() {
         <View style={[styles.heroCard, { backgroundColor: colors.accent }]}>
           <Text style={styles.heroLabel}>Total balance</Text>
           <Text style={styles.heroValue}>${fmt(total)}</Text>
+          {bankBalance != null && (
+            <Text style={{ color: "rgba(255,255,255,0.85)", fontSize: typography.xs, marginTop: 4, marginBottom: 2 }}>
+              {refreshing ? "Updating…" : `Synced ${timeAgo(lastBalanceSync)} · pull down to refresh`}
+            </Text>
+          )}
           <View style={styles.heroBarTrack}>
             <View style={[styles.heroBarFill, { width: `${allocatedPct}%` }]} />
           </View>

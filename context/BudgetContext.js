@@ -38,6 +38,8 @@ const defaultState = {
   allocated: 0,
   unallocated: 0,
   overallocated: 0,
+  bankBalance: null, // null = manual mode; a number = live bank balance supersedes the manual total
+  lastBalanceSync: null, // timestamp (ms) of the last successful bank-balance fetch
   cycle: null,
 
   // Income schedule for smart auto-allocation
@@ -202,6 +204,9 @@ function reducer(state, action) {
         unallocated: action.unallocated,
         overallocated: action.overallocated,
       };
+
+    case "SET_BANK_BALANCE":
+      return { ...state, bankBalance: action.bankBalance, lastBalanceSync: action.lastBalanceSync ?? null };
 
     // ── Categorisation rules ────────────────────────────────────────────────
 
@@ -463,13 +468,38 @@ export function BudgetProvider({ children }) {
      COMPUTE TOTALS
   ----------------------------------------------------------- */
   const recomputeTotals = useCallback(() => {
-    const t = computeTotals(state.envelopes, state.transactions);
+    const t = computeTotals(state.envelopes, state.transactions, state.bankBalance);
     dispatch({ type: "SET_TOTALS", ...t });
-  }, [state.envelopes, state.transactions]);
+  }, [state.envelopes, state.transactions, state.bankBalance]);
 
   useEffect(() => {
     recomputeTotals();
-  }, [state.envelopes, state.transactions, recomputeTotals]);
+  }, [state.envelopes, state.transactions, state.bankBalance, recomputeTotals]);
+
+  // Set (or clear) the live bank balance. Passing null reverts to manual mode.
+  const setBankBalance = useCallback((amount) => {
+    dispatch({
+      type:            "SET_BANK_BALANCE",
+      bankBalance:     amount == null ? null : Number(amount),
+      lastBalanceSync: amount == null ? null : Date.now(),
+    });
+  }, []);
+
+  // Pull the latest total balance from the backend (summed across all connected
+  // accounts) and update the top line. Safe to call on focus / foreground / pull.
+  const refreshBankBalance = useCallback(async () => {
+    const t = tokenRef.current;
+    if (!t) return;
+    try {
+      const r = await fetch(`${BACKEND_URL}/fiskil/balance`, {
+        headers: { Authorization: `Bearer ${t}` },
+      });
+      if (r.ok) {
+        const j = await r.json();
+        if (typeof j.balance === "number") setBankBalance(j.balance);
+      }
+    } catch { /* keep last known balance */ }
+  }, [setBankBalance]);
 
   /* -----------------------------------------------------------
      HELPERS
@@ -937,6 +967,10 @@ export function BudgetProvider({ children }) {
       allocated: state.allocated,
       unallocated: state.unallocated,
       overallocated: state.overallocated,
+      bankBalance: state.bankBalance,
+      lastBalanceSync: state.lastBalanceSync,
+      setBankBalance,
+      refreshBankBalance,
 
       rules: state.rules,
       addRule,
@@ -952,6 +986,8 @@ export function BudgetProvider({ children }) {
     }),
     [
       state,
+      setBankBalance,
+      refreshBankBalance,
       addEnvelope,
       addIncome,
       addSpend,

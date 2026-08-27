@@ -224,6 +224,17 @@ export default function Settings() {
           />
         </Section>
 
+        {/* ── Bank ── */}
+        <Section title="Bank" colors={colors}>
+          <ChevronRow
+            label="Connect bank account"
+            subtitle="Link your bank via open banking to import transactions automatically"
+            onPress={() => router.push("/bank-connect")}
+            colors={colors}
+            last
+          />
+        </Section>
+
         {/* ── Appearance ── */}
         <Section title="Appearance" colors={colors}>
           <ToggleRow
