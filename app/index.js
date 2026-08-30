@@ -426,7 +426,7 @@ function SetupChecklist({ state, router, colors }) {
 export default function Home() {
   const router  = useRouter();
   const { colors, isDark, toggle } = useTheme();
-  const { total, allocated, unallocated, overallocated, state, bankBalance, lastBalanceSync, refreshBankBalance } = useBudget();
+  const { total, allocated, unallocated, overallocated, state, bankBalance, lastBalanceSync, refreshBankBalance, importBankTransactions } = useBudget();
   const { isAuthenticated, loading, user } = useAuth();
 
   useEffect(() => {
@@ -438,9 +438,9 @@ export default function Home() {
   const [refreshing, setRefreshing] = useState(false);
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await refreshBankBalance();
+    await Promise.all([refreshBankBalance(), importBankTransactions()]);
     setRefreshing(false);
-  }, [refreshBankBalance]);
+  }, [refreshBankBalance, importBankTransactions]);
 
   useFocusEffect(
     useCallback(() => {
@@ -450,10 +450,10 @@ export default function Home() {
 
   useEffect(() => {
     const sub = AppState.addEventListener("change", (st) => {
-      if (st === "active" && bankBalance != null) refreshBankBalance();
+      if (st === "active" && bankBalance != null) { refreshBankBalance(); importBankTransactions(); }
     });
     return () => sub.remove();
-  }, [bankBalance, refreshBankBalance]);
+  }, [bankBalance, refreshBankBalance, importBankTransactions]);
 
   if (loading || !isAuthenticated) return null;
 

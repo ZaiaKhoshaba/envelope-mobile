@@ -208,6 +208,15 @@ function reducer(state, action) {
     case "SET_BANK_BALANCE":
       return { ...state, bankBalance: action.bankBalance, lastBalanceSync: action.lastBalanceSync ?? null };
 
+    case "CLEAR_BANK_DATA":
+      // Drop bank-imported transactions and revert the top line to manual mode.
+      return {
+        ...state,
+        transactions: (state.transactions || []).filter((t) => !t.imported),
+        bankBalance: null,
+        lastBalanceSync: null,
+      };
+
     // ── Categorisation rules ────────────────────────────────────────────────
 
     case "ADD_RULE": {
@@ -500,6 +509,21 @@ export function BudgetProvider({ children }) {
       }
     } catch { /* keep last known balance */ }
   }, [setBankBalance]);
+
+  // Fully disconnect all linked banks: revoke every consent at Fiskil, then drop
+  // bank-imported transactions locally and revert to manual mode.
+  const disconnectBank = useCallback(async () => {
+    const t = tokenRef.current;
+    if (t) {
+      try {
+        await fetch(`${BACKEND_URL}/fiskil/disconnect`, {
+          method:  "POST",
+          headers: { Authorization: `Bearer ${t}` },
+        });
+      } catch { /* best-effort — still clear locally */ }
+    }
+    dispatch({ type: "CLEAR_BANK_DATA" });
+  }, []);
 
   /* -----------------------------------------------------------
      HELPERS
@@ -940,6 +964,16 @@ export function BudgetProvider({ children }) {
         });
       }
     } catch {}
+    // Reset means reset everywhere — also revoke any connected banks at Fiskil
+    try {
+      const t = tokenRef.current;
+      if (t) {
+        await fetch(`${BACKEND_URL}/fiskil/disconnect`, {
+          method:  "POST",
+          headers: { Authorization: `Bearer ${t}` },
+        });
+      }
+    } catch {}
     dispatch({ type: "RESET_ALL" });
   }, [user?.id]);
 
@@ -971,6 +1005,7 @@ export function BudgetProvider({ children }) {
       lastBalanceSync: state.lastBalanceSync,
       setBankBalance,
       refreshBankBalance,
+      disconnectBank,
 
       rules: state.rules,
       addRule,
@@ -988,6 +1023,7 @@ export function BudgetProvider({ children }) {
       state,
       setBankBalance,
       refreshBankBalance,
+      disconnectBank,
       addEnvelope,
       addIncome,
       addSpend,

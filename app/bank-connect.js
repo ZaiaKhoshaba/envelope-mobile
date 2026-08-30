@@ -47,7 +47,7 @@ export default function BankConnectScreen() {
   const [busy, setBusy]           = useState(false);
   const [connected, setConnected] = useState(false);
   const [checking, setChecking]   = useState(true);
-  const { importBankTransactions, setBankBalance } = useBudget();
+  const { importBankTransactions, setBankBalance, disconnectBank } = useBudget();
   const { hasBankAccess }          = usePurchase();
   const { token }                  = useAuth();
   const { colors }                 = useTheme();
@@ -176,6 +176,7 @@ export default function BankConnectScreen() {
         setConnected(true);
         await AsyncStorage.setItem(CONNECTED_KEY, "1");
         await refreshBalance();
+        await importBankTransactions(); // auto-import so no manual "Import" tap is needed
         Alert.alert("Bank connected", "Your bank account has been linked successfully.");
       } else {
         setConnected(false);
@@ -190,7 +191,7 @@ export default function BankConnectScreen() {
     } finally {
       setBusy(false);
     }
-  }, [authHeaders, redirectUri, refreshBalance]);
+  }, [authHeaders, redirectUri, refreshBalance, importBankTransactions]);
 
   const onImport = useCallback(async () => {
     try {
@@ -232,14 +233,19 @@ export default function BankConnectScreen() {
           text: "Disconnect",
           style: "destructive",
           onPress: async () => {
-            setConnected(false);
-            await AsyncStorage.removeItem(CONNECTED_KEY);
-            setBankBalance(null); // revert the top-line total to manual mode
+            setBusy(true);
+            try {
+              await disconnectBank(); // revoke consents at Fiskil + drop bank data locally
+              setConnected(false);
+              await AsyncStorage.removeItem(CONNECTED_KEY);
+            } finally {
+              setBusy(false);
+            }
           },
         },
       ]
     );
-  }, [setBankBalance]);
+  }, [disconnectBank]);
 
   if (checking) {
     return (
