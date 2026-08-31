@@ -327,9 +327,11 @@ function AllocationPlanCard({ analysis, incomeSchedule, colors }) {
 
 // ── Setup checklist ───────────────────────────────────────────────────────────
 
-function SetupChecklist({ state, router, colors }) {
+function SetupChecklist({ state, router, colors, bankConnected }) {
   const hasIncome        = state.transactions.some(t => t.kind === "income");
-  const step1Done        = hasIncome;
+  // A connected user never adds manual income — their balance comes from the
+  // bank, so a live connection completes this step just as well.
+  const step1Done        = hasIncome || bankConnected;
   const hasSchedule      = !!(state.incomeSchedule?.amount && state.incomeSchedule?.frequency);
   const hasEnvelope      = state.envelopes.length > 0;
   const hasAllocated     = state.envelopes.some(e => Number(e.amount) > 0);
@@ -341,10 +343,15 @@ function SetupChecklist({ state, router, colors }) {
 
   const steps = [
     {
-      label:   "Enter your bank balance",
-      sub:     "Add what's currently in your bank so every dollar is ready to allocate",
+      label:   bankConnected ? "Bank connected" : "Enter your bank balance",
+      sub:     bankConnected
+        ? "Your balance updates automatically from your bank"
+        : "Add what's currently in your bank so every dollar is ready to allocate",
       done:    step1Done,
-      onPress: () => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push("/add-income"); },
+      onPress: () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        router.push(bankConnected ? "/bank-connect" : "/add-income");
+      },
     },
     {
       label:   "Set up income schedule",
@@ -503,7 +510,7 @@ export default function Home() {
         </View>
 
         {/* ── Setup checklist ── */}
-        <SetupChecklist state={state} router={router} colors={colors} />
+        <SetupChecklist state={state} router={router} colors={colors} bankConnected={bankBalance != null} />
 
         {/* ── Balance hero card ── */}
         <View style={[styles.heroCard, { backgroundColor: colors.accent }]}>

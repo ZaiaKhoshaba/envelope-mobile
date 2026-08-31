@@ -47,7 +47,12 @@ export default function BankConnectScreen() {
   const [busy, setBusy]           = useState(false);
   const [connected, setConnected] = useState(false);
   const [checking, setChecking]   = useState(true);
-  const { importBankTransactions, setBankBalance, disconnectBank } = useBudget();
+  const { importBankTransactions, setBankBalance, disconnectBank, state } = useBudget();
+
+  // Real progress, so the steps below can actually complete.
+  const txs           = state?.transactions ?? [];
+  const hasImported   = txs.some((t) => t.imported);
+  const hasAllocated  = txs.some((t) => t.imported && t.allocated);
   const { hasBankAccess }          = usePurchase();
   const { token }                  = useAuth();
   const { colors }                 = useTheme();
@@ -284,15 +289,19 @@ export default function BankConnectScreen() {
           <StepRow
             number="2"
             title="Transactions sync"
-            body="Your spending appears in real time. Tap each transaction to draw from the right envelope."
-            done={false}
+            body={hasImported
+              ? "Your transactions are syncing automatically."
+              : "Your spending appears automatically once your bank is linked."}
+            done={hasImported}
             colors={colors}
           />
           <StepRow
             number="3"
             title="Budget stays accurate"
-            body="Your envelope balances update automatically as you spend."
-            done={false}
+            body={hasAllocated
+              ? "Your envelope balances update as you spend."
+              : "Tap a transaction to draw it from the right envelope — then balances update automatically."}
+            done={hasAllocated}
             colors={colors}
           />
         </View>

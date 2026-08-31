@@ -17,10 +17,11 @@ import {
   SafeAreaView,
   ScrollView,
   Animated,
+  Alert,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useTheme, spacing, radius, typography } from "../theme";
-import { usePurchase, PLANS } from "../context/PurchaseContext";
+import { usePurchase, PLANS, TRIAL_DAYS } from "../context/PurchaseContext";
 
 // ── Slide content ─────────────────────────────────────────────────────────────
 
@@ -125,8 +126,21 @@ export default function Onboarding() {
   };
 
   const handleSubscribe = async (planKey) => {
-    await purchase(planKey);
-    router.replace("/pin-setup");
+    const res = await purchase(planKey);
+    if (res?.ok) {
+      router.replace("/pin-setup");
+      return;
+    }
+    // Payments aren't live yet — say so plainly, and offer the trial, which
+    // already unlocks everything including bank sync.
+    Alert.alert(
+      "Not available yet",
+      res?.error || "Something went wrong. Please try again.",
+      [
+        { text: "Back", style: "cancel" },
+        { text: `Start ${TRIAL_DAYS}-day free trial`, onPress: () => router.replace("/pin-setup") },
+      ]
+    );
   };
 
   return (

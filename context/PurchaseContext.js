@@ -24,22 +24,56 @@ const SUBSCRIPTIONS_ENABLED = true;
 
 export const TRIAL_DAYS = 30;
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   PRICING — edit your prices here, and nowhere else.
 
-// Prices shown in the UI (AUD)
+   Change `amount` to whatever you want to charge. Everything in the app
+   (onboarding, paywall, settings) reads from here, and the annual saving
+   badge recalculates itself, so the numbers can never contradict each other.
+
+   Note: once the app is live in the stores, customers always pay the price
+   set in App Store Connect / Play Console. These amounts are what Tend shows
+   before the store prices load — keep them in step with the store.
+   ═══════════════════════════════════════════════════════════════════════════ */
+export const PRICING = {
+  currency: "$",
+  monthly: { amount: 4.99,  productId: "envelopes_monthly_499" },
+  annual:  { amount: 29.99, productId: "envelopes_annual_2999" },
+};
+
+/* Accounts allowed to use the internal testing tools. Add your own logins here.
+   Anyone not on this list never sees them, no matter what they tap. */
+export const TEST_ACCOUNTS = [
+  "zaia.khoshaba@outlook.com",
+];
+
+export function isTestAccount(email) {
+  if (!email) return false;
+  return TEST_ACCOUNTS.includes(String(email).trim().toLowerCase());
+}
+
+const money = (n) => `${PRICING.currency}${Number(n).toFixed(2)}`;
+
+// How much cheaper the annual plan is per year, as a whole percentage.
+const annualSavingPct = Math.round(
+  (1 - PRICING.annual.amount / (PRICING.monthly.amount * 12)) * 100
+);
+
+// Prices shown in the UI (AUD) — derived from PRICING above.
 export const PLANS = {
   monthly: {
-    id:        "envelopes_monthly_499",   // ← replace with your App Store product ID
+    id:        PRICING.monthly.productId,
     label:     "Monthly",
-    price:     "$4.99",
+    price:     money(PRICING.monthly.amount),
     period:    "/ month",
     savingTag: null,
   },
   annual: {
-    id:        "envelopes_annual_2999",   // ← replace with your App Store product ID
+    id:        PRICING.annual.productId,
     label:     "Annual",
-    price:     "$29.99",
+    price:     money(PRICING.annual.amount),
     period:    "/ year",
-    savingTag: "Save 50%",
+    savingTag: annualSavingPct > 0 ? `Save ${annualSavingPct}%` : null,
   },
 };
 
@@ -55,6 +89,9 @@ export function PurchaseProvider({ children }) {
   const [isFreeUser,      setIsFreeUser]      = useState(false); // chose "continue free"
   const [devForceFree,    setDevForceFree]    = useState(false); // dev tools toggle
   const [isLoading,       setIsLoading]       = useState(true);
+
+  // Internal testing tools are limited to known accounts (see TEST_ACCOUNTS).
+  const isTester = useMemo(() => isTestAccount(user?.email), [user?.email]);
 
   // Load the dev override once on mount (device-wide, not per-user)
   useEffect(() => {
@@ -132,25 +169,23 @@ export function PurchaseProvider({ children }) {
 
   const purchase = useCallback(async (planKey) => {
     const plan = PLANS[planKey];
-    if (!plan) return { ok: false, error: "Unknown plan" };
+    if (!plan) return { ok: false, error: "That plan isn't available." };
 
     console.log("[purchases] Purchase triggered:", plan.id);
 
-    // ── Development stub ────────────────────────────────────────────────────
-    // Uncomment the lines below to simulate a successful purchase locally
-    // (useful for testing the post-paywall experience before the app is live).
-    //
-    // if (user?.id) {
-    //   await AsyncStorage.setItem(`subscribed_${user.id}`, "true");
-    //   setIsSubscribed(true);
-    //   return { ok: true };
-    // }
+    // Test accounts can simulate a subscription so the paid experience can be
+    // walked end-to-end before the stores are live. Never available to real users.
+    if (isTester && user?.id) {
+      await AsyncStorage.setItem(`subscribed_${user.id}`, "true");
+      setIsSubscribed(true);
+      return { ok: true, simulated: true };
+    }
 
     return {
       ok:    false,
-      error: "In-app purchases are not available in this build.\nThey will work once the app is published to the App Store and Google Play.",
+      error: "Payments aren't available yet — Tend isn't published to the App Store or Google Play. Your free trial keeps everything unlocked in the meantime.",
     };
-  }, [user?.id]);
+  }, [user?.id, isTester]);
 
   // ── Dev: force free user mode ─────────────────────────────────────────────
   const toggleDevForceFree = useCallback(async (value) => {
@@ -182,9 +217,19 @@ export function PurchaseProvider({ children }) {
     console.log("[purchases] Restore triggered");
     return {
       ok:    false,
-      error: "Restore is not available in this build.\nIt will work once the app is published.",
+      error: "There's nothing to restore yet — Tend isn't published to the App Store or Google Play, so no purchases exist. Once it's live, this will bring back any subscription bought with your store account.",
     };
   }, []);
+
+  // ── Testing: flip your own account between paid and unpaid ─────────────────
+  // Only works for accounts in TEST_ACCOUNTS. Once RevenueCat is wired up, the
+  // admin panel's grant/revoke entitlement replaces this entirely.
+  const setTestSubscription = useCallback(async (value) => {
+    if (!user?.id || !isTester) return { ok: false, error: "Not a test account." };
+    await AsyncStorage.setItem(`subscribed_${user.id}`, value ? "true" : "false");
+    setIsSubscribed(value);
+    return { ok: true };
+  }, [user?.id, isTester]);
 
   const value = useMemo(
     () => ({
@@ -200,10 +245,13 @@ export function PurchaseProvider({ children }) {
       continueForFree,
       devForceFree,
       toggleDevForceFree,
+      isTester,
+      setTestSubscription,
       PLANS,
+      PRICING,
       TRIAL_DAYS,
     }),
-    [isLoading, isSubscribed, isFreeUser, isActive, hasBankAccess, trialExpired, daysRemaining, purchase, restorePurchases, continueForFree, devForceFree, toggleDevForceFree]
+    [isLoading, isSubscribed, isFreeUser, isActive, hasBankAccess, trialExpired, daysRemaining, purchase, restorePurchases, continueForFree, devForceFree, toggleDevForceFree, isTester, setTestSubscription]
   );
 
   return (

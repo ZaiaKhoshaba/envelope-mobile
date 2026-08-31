@@ -105,7 +105,7 @@ export default function Settings() {
   const { colors, isDark, toggle } = useTheme();
   const { resetAll, simulateRandomSpend } = useBudget();
   const { logout, user, pinEnabled, disablePin } = useAuth();
-  const { devForceFree, toggleDevForceFree, isSubscribed, isFreeUser, trialExpired, daysRemaining, purchase, restorePurchases } = usePurchase();
+  const { devForceFree, toggleDevForceFree, isSubscribed, isFreeUser, trialExpired, daysRemaining, purchase, restorePurchases, isTester, setTestSubscription } = usePurchase();
   const s = makeStyles(colors);
 
 
@@ -114,6 +114,9 @@ export default function Settings() {
   const [devModeOn,   setDevModeOn]   = useState(false);
 
   const handleVersionTap = useCallback(() => {
+    // Internal tools are limited to test accounts — a real customer tapping the
+    // version row just taps a version row.
+    if (!isTester) return;
     const next = devTapCount + 1;
     setDevTapCount(next);
     if (next >= DEV_UNLOCK_TAPS && !devModeOn) {
@@ -124,7 +127,7 @@ export default function Settings() {
       const remaining = DEV_UNLOCK_TAPS - next;
       if (remaining > 0) Alert.alert("", `${remaining} more tap${remaining !== 1 ? "s" : ""} to enable developer mode.`);
     }
-  }, [devTapCount, devModeOn]);
+  }, [devTapCount, devModeOn, isTester]);
 
   const disableDevMode = () => {
     setDevModeOn(false);
@@ -149,6 +152,27 @@ export default function Settings() {
       ]
     );
   };
+
+  // Always surface what actually happened — never claim success on a failure.
+  const handlePurchase = useCallback(async (planKey) => {
+    const res = await purchase(planKey);
+    if (res?.ok) {
+      Alert.alert(
+        res.simulated ? "Premium enabled (test)" : "You're all set",
+        res.simulated
+          ? "Simulated subscription active on this test account."
+          : "Thanks for subscribing — Premium is now active."
+      );
+    } else {
+      Alert.alert("Not available yet", res?.error || "Something went wrong. Please try again.");
+    }
+  }, [purchase]);
+
+  const handleRestore = useCallback(async () => {
+    const res = await restorePurchases();
+    if (res?.ok) Alert.alert("Purchases restored", "Your subscription is active again.");
+    else         Alert.alert("Nothing to restore", res?.error || "No previous purchases were found.");
+  }, [restorePurchases]);
 
   const handleLogout = () => {
     Alert.alert(
@@ -204,8 +228,8 @@ export default function Settings() {
                   `${PLANS.monthly.price}/month or ${PLANS.annual.price}/year.\n\nBank sync lets Tend automatically import your transactions.`,
                   [
                     { text: "Cancel", style: "cancel" },
-                    { text: `${PLANS.monthly.price}/mo`, onPress: () => purchase("monthly") },
-                    { text: `${PLANS.annual.price}/yr`, onPress: () => purchase("annual") },
+                    { text: `${PLANS.monthly.price}/mo`, onPress: () => handlePurchase("monthly") },
+                    { text: `${PLANS.annual.price}/yr`, onPress: () => handlePurchase("annual") },
                   ]
                 );
               }}
@@ -215,10 +239,7 @@ export default function Settings() {
           <ChevronRow
             label="Restore purchases"
             subtitle="Tap if you've already subscribed"
-            onPress={async () => {
-              await restorePurchases();
-              Alert.alert("Restore complete", "If you have an active subscription it has been restored.");
-            }}
+            onPress={handleRestore}
             colors={colors}
             last
           />
@@ -277,7 +298,7 @@ export default function Settings() {
           />
           <SettingRow
             label="Version"
-            subtitle="Tap multiple times to unlock developer options"
+            subtitle={isTester ? "Tap multiple times to unlock developer options" : null}
             colors={colors}
             last
             onPress={handleVersionTap}
@@ -289,9 +310,16 @@ export default function Settings() {
           />
         </Section>
 
-        {/* ── Developer tools (hidden until 5-tap unlock) ── */}
-        {devModeOn && (
+        {/* ── Developer tools (test accounts only, after 5-tap unlock) ── */}
+        {devModeOn && isTester && (
           <Section title="Developer tools" colors={colors}>
+            <ToggleRow
+              label="Simulate Premium subscriber"
+              subtitle="Flip this account between paid and unpaid to test both experiences"
+              value={isSubscribed}
+              onValueChange={(v) => setTestSubscription(v)}
+              colors={colors}
+            />
             <SettingRow
               label="Mock spend"
               subtitle="Simulate a random transaction for testing"
