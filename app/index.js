@@ -28,6 +28,14 @@ function getTimeOfDay() {
   return "evening";
 }
 
+function initialsOf(user) {
+  const source = user?.firstName || user?.name || user?.email || "?";
+  const parts = String(source).trim().split(/[\s@._-]+/).filter(Boolean);
+  const first = parts[0]?.[0] ?? "?";
+  const second = parts.length > 1 ? parts[1][0] : "";
+  return (first + second).toUpperCase();
+}
+
 function timeAgo(ts) {
   if (!ts) return "just now";
   const secs = Math.floor((Date.now() - ts) / 1000);
@@ -500,13 +508,27 @@ export default function Home() {
             </Text>
             <Text style={[styles.appName, { color: colors.textPrimary }]}>Tend</Text>
           </View>
-          <TouchableOpacity
-            style={[styles.themeToggle, { backgroundColor: colors.card, borderColor: colors.border }]}
-            onPress={toggle}
-            activeOpacity={0.8}
-          >
-            <Text style={{ fontSize: 18 }}>{isDark ? "☀️" : "🌙"}</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <TouchableOpacity
+              style={[styles.themeToggle, { backgroundColor: colors.card, borderColor: colors.border }]}
+              onPress={toggle}
+              activeOpacity={0.8}
+            >
+              <Text style={{ fontSize: 18 }}>{isDark ? "☀️" : "🌙"}</Text>
+            </TouchableOpacity>
+
+            {/* Your account — name, plan, linked banks, log out */}
+            <TouchableOpacity
+              style={[styles.themeToggle, { backgroundColor: colors.accent, borderColor: colors.accent }]}
+              onPress={() => router.push("/profile")}
+              activeOpacity={0.8}
+              accessibilityLabel="Your account"
+            >
+              <Text style={{ color: "#fff", fontSize: 15, fontWeight: "700" }}>
+                {initialsOf(user)}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* ── Setup checklist ── */}

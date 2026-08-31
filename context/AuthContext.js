@@ -257,6 +257,29 @@ export function AuthProvider({ children }) {
     await clearStoredSession();
   }, [clearStoredSession]);
 
+  // Permanently delete the account and everything stored for it. The server
+  // revokes any bank consents first, then removes the user's records; we only
+  // clear the local session once that has actually succeeded.
+  const deleteAccount = useCallback(async () => {
+    const t = tokenRef.current;
+    if (!t) return { ok: false, error: "You're not signed in." };
+    try {
+      const r = await fetch(`${BASE_URL}/account`, {
+        method:  "DELETE",
+        headers: { Authorization: `Bearer ${t}` },
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j?.ok === false) {
+        return { ok: false, error: j?.error || `Couldn't delete your account (${r.status}). Please try again.` };
+      }
+      await setRememberMe(false);
+      await clearStoredSession();
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: "Couldn't reach the server. Check your connection and try again." };
+    }
+  }, [clearStoredSession]);
+
   // ── PIN management ────────────────────────────────────────────────────────────
 
   const enablePin = useCallback(async (pin) => {
@@ -290,6 +313,7 @@ export function AuthProvider({ children }) {
     register,
     login,
     logout,
+    deleteAccount,
     enablePin,
     disablePin,
     verifyPin,

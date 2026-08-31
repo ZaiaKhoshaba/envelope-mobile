@@ -1,4 +1,7 @@
 // app/settings.js
+// Settings is for things you change. Who you are lives on the Profile screen
+// (the avatar on Home); testing tools are limited to accounts in TEST_ACCOUNTS.
+
 import React, { useState, useCallback } from "react";
 import {
   View,
@@ -9,9 +12,9 @@ import {
   SafeAreaView,
   Switch,
   Alert,
+  Linking,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { Linking } from "react-native";
 import { useBudget } from "../context/BudgetContext";
 import { useAuth } from "../context/AuthContext";
 import { usePurchase, PLANS } from "../context/PurchaseContext";
@@ -19,12 +22,28 @@ import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
 
 const DEV_UNLOCK_TAPS = 5;
 
+// Public pages — update these if the URLs change.
+const PRIVACY_URL = "https://zaiakhoshaba.github.io/tend-privacy-policy/";
+const SUPPORT_EMAIL = "tend.budget.app@outlook.com";
+
+function timeAgo(ts) {
+  if (!ts) return null;
+  const mins = Math.floor((Date.now() - ts) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
 // ── Section wrapper ───────────────────────────────────────────────────────────
 
 function Section({ title, children, colors }) {
   return (
     <View style={{ marginBottom: spacing.xl }}>
-      <Text style={[sec.title, { color: colors.textSecondary }]}>{title.toUpperCase()}</Text>
+      {title ? (
+        <Text style={[sec.title, { color: colors.textSecondary }]}>{title.toUpperCase()}</Text>
+      ) : null}
       <View style={[sec.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
         {children}
       </View>
@@ -34,11 +53,11 @@ function Section({ title, children, colors }) {
 
 // ── Row types ─────────────────────────────────────────────────────────────────
 
-function SettingRow({ label, subtitle, right, onPress, colors, last }) {
+function SettingRow({ label, subtitle, right, onPress, colors, last, danger }) {
   const content = (
     <View style={[row.wrap, !last && { borderBottomColor: colors.border, borderBottomWidth: 1 }]}>
       <View style={{ flex: 1 }}>
-        <Text style={[row.label, { color: colors.textPrimary }]}>{label}</Text>
+        <Text style={[row.label, { color: danger ? colors.danger : colors.textPrimary }]}>{label}</Text>
         {subtitle ? (
           <Text style={[row.subtitle, { color: colors.textSecondary }]} numberOfLines={3}>
             {subtitle}
@@ -78,7 +97,7 @@ function ToggleRow({ label, subtitle, value, onValueChange, colors, last }) {
   );
 }
 
-function ChevronRow({ label, subtitle, value, onPress, colors, last }) {
+function ChevronRow({ label, subtitle, value, onPress, colors, last, danger }) {
   return (
     <SettingRow
       label={label}
@@ -86,12 +105,13 @@ function ChevronRow({ label, subtitle, value, onPress, colors, last }) {
       colors={colors}
       last={last}
       onPress={onPress}
+      danger={danger}
       right={
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
           {value ? (
             <Text style={[row.value, { color: colors.textSecondary }]}>{value}</Text>
           ) : null}
-          <Text style={{ color: colors.textMuted, fontSize: 18 }}>›</Text>
+          <Text style={{ color: danger ? colors.danger : colors.textMuted, fontSize: 18 }}>›</Text>
         </View>
       }
     />
@@ -103,57 +123,43 @@ function ChevronRow({ label, subtitle, value, onPress, colors, last }) {
 export default function Settings() {
   const router = useRouter();
   const { colors, isDark, toggle } = useTheme();
-  const { resetAll, simulateRandomSpend } = useBudget();
-  const { logout, user, pinEnabled, disablePin } = useAuth();
-  const { devForceFree, toggleDevForceFree, isSubscribed, isFreeUser, trialExpired, daysRemaining, purchase, restorePurchases, isTester, setTestSubscription } = usePurchase();
+  const { resetAll, bankBalance, bankAccountCount, lastBalanceSync } = useBudget();
+  const { logout, deleteAccount, pinEnabled, disablePin } = useAuth();
+  const {
+    isSubscribed, isFreeUser, trialExpired, daysRemaining,
+    purchase, restorePurchases, isTester, setTestSubscription,
+    devForceFree, toggleDevForceFree,
+  } = usePurchase();
   const s = makeStyles(colors);
 
-
-  // ── Developer mode (5-tap unlock on version row) ──
+  // ── Developer mode (test accounts only, 5-tap unlock) ──
   const [devTapCount, setDevTapCount] = useState(0);
   const [devModeOn,   setDevModeOn]   = useState(false);
 
   const handleVersionTap = useCallback(() => {
-    // Internal tools are limited to test accounts — a real customer tapping the
-    // version row just taps a version row.
-    if (!isTester) return;
+    if (!isTester) return; // real customers just tap a version row
     const next = devTapCount + 1;
     setDevTapCount(next);
     if (next >= DEV_UNLOCK_TAPS && !devModeOn) {
       setDevModeOn(true);
       setDevTapCount(0);
       Alert.alert("Developer mode enabled", "You now have access to testing tools.");
-    } else if (!devModeOn && next >= 2) {
-      const remaining = DEV_UNLOCK_TAPS - next;
-      if (remaining > 0) Alert.alert("", `${remaining} more tap${remaining !== 1 ? "s" : ""} to enable developer mode.`);
     }
   }, [devTapCount, devModeOn, isTester]);
 
-  const disableDevMode = () => {
-    setDevModeOn(false);
-    setDevTapCount(0);
-    Alert.alert("Developer mode disabled");
-  };
+  // ── Plan ──
+  const planStatus =
+    isSubscribed ? "Premium — active"
+    : trialExpired && isFreeUser ? "Free — bank sync is off"
+    : trialExpired ? "Trial expired"
+    : `Free trial — ${daysRemaining} day${daysRemaining !== 1 ? "s" : ""} left`;
 
-  const handleResetAll = () => {
-    Alert.alert(
-      "Reset all data",
-      "This will permanently delete all envelopes, transactions, and settings. This cannot be undone.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Reset everything",
-          style: "destructive",
-          onPress: async () => {
-            await resetAll();
-            router.replace("/login");
-          },
-        },
-      ]
-    );
-  };
+  const planSubtitle = isSubscribed
+    ? "Bank sync, spend alerts and one-tap allocation are on."
+    : trialExpired
+      ? `Subscribe to turn bank sync back on — ${PLANS.monthly.price}/mo or ${PLANS.annual.price}/yr.`
+      : "Everything is unlocked during your trial, including bank sync.";
 
-  // Always surface what actually happened — never claim success on a failure.
   const handlePurchase = useCallback(async (planKey) => {
     const res = await purchase(planKey);
     if (res?.ok) {
@@ -168,29 +174,95 @@ export default function Settings() {
     }
   }, [purchase]);
 
+  const openPlans = useCallback(() => {
+    if (isSubscribed) {
+      Alert.alert(
+        "Premium",
+        "Your subscription is active.\n\nTo change or cancel it, use your App Store or Google Play subscription settings."
+      );
+      return;
+    }
+    Alert.alert(
+      "Upgrade to Premium",
+      `${PLANS.monthly.price}${PLANS.monthly.period} or ${PLANS.annual.price}${PLANS.annual.period}${PLANS.annual.savingTag ? ` (${PLANS.annual.savingTag})` : ""}.\n\nBank sync imports your transactions automatically so your envelopes stay accurate.`,
+      [
+        { text: "Not now", style: "cancel" },
+        { text: `${PLANS.monthly.price}/mo`, onPress: () => handlePurchase("monthly") },
+        { text: `${PLANS.annual.price}/yr`, onPress: () => handlePurchase("annual") },
+      ]
+    );
+  }, [isSubscribed, handlePurchase]);
+
   const handleRestore = useCallback(async () => {
     const res = await restorePurchases();
     if (res?.ok) Alert.alert("Purchases restored", "Your subscription is active again.");
     else         Alert.alert("Nothing to restore", res?.error || "No previous purchases were found.");
   }, [restorePurchases]);
 
-  const handleLogout = () => {
+  // ── Bank ──
+  const bankSubtitle =
+    bankBalance == null
+      ? "Not connected — link a bank to import transactions automatically"
+      : `${bankAccountCount || 1} account${(bankAccountCount || 1) !== 1 ? "s" : ""} linked${timeAgo(lastBalanceSync) ? ` · synced ${timeAgo(lastBalanceSync)}` : ""}`;
+
+  // ── Danger zone ──
+  const handleResetAll = useCallback(() => {
     Alert.alert(
-      "Log out",
-      "Your data will be saved locally. You'll need to log in again to access it.",
+      "Reset all data",
+      "This permanently deletes your envelopes, transactions and settings, and disconnects any linked bank. Your account stays open. This can't be undone.",
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: "Log out",
+          text: "Reset everything",
           style: "destructive",
-          onPress: async () => {
-            await logout();
-            router.replace("/login");
+          onPress: async () => { await resetAll(); router.replace("/login"); },
+        },
+      ]
+    );
+  }, [resetAll, router]);
+
+  const handleDeleteAccount = useCallback(() => {
+    Alert.alert(
+      "Delete account",
+      "This permanently deletes your account and everything we hold for you, and withdraws any bank data sharing. It can't be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Continue",
+          style: "destructive",
+          onPress: () => {
+            Alert.alert(
+              "Are you sure?",
+              "There's no way to recover your account or budget after this.",
+              [
+                { text: "Keep my account", style: "cancel" },
+                {
+                  text: "Delete permanently",
+                  style: "destructive",
+                  onPress: async () => {
+                    const res = await deleteAccount();
+                    if (res?.ok) {
+                      Alert.alert("Account deleted", "Your account and data have been removed.");
+                      router.replace("/login");
+                    } else {
+                      Alert.alert("Couldn't delete account", res?.error || "Please try again.");
+                    }
+                  },
+                },
+              ]
+            );
           },
         },
       ]
     );
-  };
+  }, [deleteAccount, router]);
+
+  const handleLogout = useCallback(() => {
+    Alert.alert("Log out", "Your data stays saved. You'll need to log in again.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Log out", style: "destructive", onPress: async () => { await logout(); router.replace("/login"); } },
+    ]);
+  }, [logout, router]);
 
   return (
     <SafeAreaView style={s.screen}>
@@ -199,46 +271,17 @@ export default function Settings() {
         showsVerticalScrollIndicator={false}
       >
 
-        {/* ── Subscription ── */}
-        <Section title="Subscription" colors={colors}>
-          <SettingRow
-            label="Current plan"
-            subtitle={
-              isSubscribed ? "Premium" :
-              isFreeUser   ? "Free" :
-              trialExpired ? "Trial expired" :
-              `Free trial — ${daysRemaining} day${daysRemaining !== 1 ? "s" : ""} left`
-            }
+        {/* ── Plan ── */}
+        <Section title="Plan" colors={colors}>
+          <ChevronRow
+            label={planStatus}
+            subtitle={planSubtitle}
+            onPress={openPlans}
             colors={colors}
-            right={
-              isSubscribed ? (
-                <View style={{ backgroundColor: colors.accentSoft, borderRadius: radius.sm, paddingHorizontal: spacing.sm, paddingVertical: 2 }}>
-                  <Text style={{ color: colors.accent, fontSize: typography.xs, fontWeight: typography.bold }}>ACTIVE</Text>
-                </View>
-              ) : null
-            }
           />
-          {!isSubscribed && (
-            <ChevronRow
-              label="Upgrade to Premium"
-              subtitle={`${PLANS.monthly.price}/mo · Bank sync, spend alerts, one-tap allocation`}
-              onPress={async () => {
-                Alert.alert(
-                  "Upgrade to Premium",
-                  `${PLANS.monthly.price}/month or ${PLANS.annual.price}/year.\n\nBank sync lets Tend automatically import your transactions.`,
-                  [
-                    { text: "Cancel", style: "cancel" },
-                    { text: `${PLANS.monthly.price}/mo`, onPress: () => handlePurchase("monthly") },
-                    { text: `${PLANS.annual.price}/yr`, onPress: () => handlePurchase("annual") },
-                  ]
-                );
-              }}
-              colors={colors}
-            />
-          )}
           <ChevronRow
             label="Restore purchases"
-            subtitle="Tap if you've already subscribed"
+            subtitle="Already subscribed on another device?"
             onPress={handleRestore}
             colors={colors}
             last
@@ -248,57 +291,80 @@ export default function Settings() {
         {/* ── Bank ── */}
         <Section title="Bank" colors={colors}>
           <ChevronRow
-            label="Connect bank account"
-            subtitle="Link your bank via open banking to import transactions automatically"
+            label="Bank accounts"
+            subtitle={bankSubtitle}
             onPress={() => router.push("/bank-connect")}
             colors={colors}
             last
           />
         </Section>
 
-        {/* ── Appearance ── */}
-        <Section title="Appearance" colors={colors}>
+        {/* ── Privacy & security ── */}
+        <Section title="Privacy & security" colors={colors}>
+          <ChevronRow
+            label={pinEnabled ? "Change PIN" : "Set up PIN"}
+            subtitle={pinEnabled
+              ? "Locks the app after 5 minutes of inactivity"
+              : "Lock the app with a 4-digit PIN"}
+            onPress={() => router.push("/pin-setup")}
+            colors={colors}
+          />
+          {pinEnabled && (
+            <SettingRow
+              label="Remove PIN"
+              subtitle="Turn off PIN lock"
+              colors={colors}
+              onPress={() => {
+                Alert.alert("Remove PIN", "PIN lock will be turned off. You can set it up again any time.", [
+                  { text: "Cancel", style: "cancel" },
+                  { text: "Remove PIN", style: "destructive", onPress: () => disablePin() },
+                ]);
+              }}
+              right={<Text style={{ color: colors.danger, fontSize: 18 }}>›</Text>}
+            />
+          )}
+          <ChevronRow
+            label="Data & consent"
+            subtitle="See what you're sharing, and withdraw it any time"
+            onPress={() => router.push("/data-consent")}
+            colors={colors}
+            last
+          />
+        </Section>
+
+        {/* ── Help ── */}
+        <Section title="Help" colors={colors}>
+          <ChevronRow
+            label="How Tend works"
+            subtitle="Replay the guide"
+            onPress={() => router.push("/onboarding")}
+            colors={colors}
+          />
+          <ChevronRow
+            label="Contact support"
+            subtitle="Send feedback or report a problem"
+            onPress={() => Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=Tend%20App%20Feedback`)}
+            colors={colors}
+          />
+          <ChevronRow
+            label="Privacy policy"
+            subtitle="How your data is handled"
+            onPress={() => Linking.openURL(PRIVACY_URL)}
+            colors={colors}
+            last
+          />
+        </Section>
+
+        {/* ── Appearance + version (no heading — housekeeping) ── */}
+        <Section colors={colors}>
           <ToggleRow
             label="Dark mode"
-            subtitle={isDark ? "Currently using dark theme" : "Currently using light theme"}
             value={isDark}
             onValueChange={toggle}
-            colors={colors}
-            last
-          />
-        </Section>
-
-        {/* ── Support ── */}
-        <Section title="Support" colors={colors}>
-          <ChevronRow
-            label="Contact us"
-            subtitle="Send feedback or report an issue"
-            onPress={() =>
-              Linking.openURL(
-                "mailto:tend.budget.app@outlook.com?subject=Tend%20App%20Feedback"
-              )
-            }
-            colors={colors}
-            last
-          />
-        </Section>
-
-        {/* ── About ── */}
-        <Section title="About" colors={colors}>
-          <SettingRow
-            label="Signed in as"
-            subtitle={user?.email ?? "—"}
-            colors={colors}
-          />
-          <ChevronRow
-            label="How it works"
-            subtitle="Replay the onboarding guide"
-            onPress={() => router.push("/onboarding")}
             colors={colors}
           />
           <SettingRow
             label="Version"
-            subtitle={isTester ? "Tap multiple times to unlock developer options" : null}
             colors={colors}
             last
             onPress={handleVersionTap}
@@ -310,36 +376,22 @@ export default function Settings() {
           />
         </Section>
 
-        {/* ── Developer tools (test accounts only, after 5-tap unlock) ── */}
+        {/* ── Developer tools (test accounts only) ── */}
         {devModeOn && isTester && (
           <Section title="Developer tools" colors={colors}>
             <ToggleRow
               label="Simulate Premium subscriber"
-              subtitle="Flip this account between paid and unpaid to test both experiences"
+              subtitle="Flip this account between paid and unpaid"
               value={isSubscribed}
               onValueChange={(v) => setTestSubscription(v)}
               colors={colors}
             />
-            <SettingRow
-              label="Mock spend"
-              subtitle="Simulate a random transaction for testing"
+            <ToggleRow
+              label="Simulate free user"
+              subtitle="Hides bank sync to preview the free experience"
+              value={devForceFree}
+              onValueChange={toggleDevForceFree}
               colors={colors}
-              onPress={() => {
-                const result = simulateRandomSpend?.();
-                if (result?.ok) {
-                  Alert.alert("Mock spend created", "Check the Transactions tab.");
-                } else {
-                  Alert.alert("Unavailable", result?.message || "Add envelopes with funds before simulating a spend.");
-                }
-              }}
-              right={<Text style={{ color: colors.textMuted, fontSize: 18 }}>›</Text>}
-            />
-            <SettingRow
-              label="Add test income"
-              subtitle="Add mock income to unallocated balance"
-              colors={colors}
-              onPress={() => router.push("/add-income")}
-              right={<Text style={{ color: colors.textMuted, fontSize: 18 }}>›</Text>}
             />
             <ChevronRow
               label="Cycle manager"
@@ -347,60 +399,15 @@ export default function Settings() {
               onPress={() => router.push("/cycle")}
               colors={colors}
             />
-            <ToggleRow
-              label="Simulate free user"
-              subtitle="Hides bank sync, shows Add Income + Add Spend"
-              value={devForceFree}
-              onValueChange={toggleDevForceFree}
-              colors={colors}
-            />
             <SettingRow
-              label="Disable developer mode"
+              label="Turn off developer mode"
               colors={colors}
               last
-              onPress={disableDevMode}
+              onPress={() => { setDevModeOn(false); setDevTapCount(0); }}
               right={<Text style={{ color: colors.danger, fontSize: 18 }}>›</Text>}
             />
           </Section>
         )}
-
-        {/* ── Security ── */}
-        <Section title="Security" colors={colors}>
-          <ChevronRow
-            label={pinEnabled ? "Change PIN" : "Set up PIN"}
-            subtitle={
-              pinEnabled
-                ? "Update your 4-digit quick-access PIN"
-                : "Lock the app with a 4-digit PIN after 5 minutes of inactivity"
-            }
-            onPress={() => router.push("/pin-setup")}
-            colors={colors}
-            last={!pinEnabled}
-          />
-          {pinEnabled && (
-            <SettingRow
-              label="Remove PIN"
-              subtitle="Disable PIN lock entirely"
-              colors={colors}
-              last
-              onPress={() => {
-                Alert.alert(
-                  "Remove PIN",
-                  "PIN lock will be disabled. You can set it up again at any time.",
-                  [
-                    { text: "Cancel", style: "cancel" },
-                    {
-                      text: "Remove PIN",
-                      style: "destructive",
-                      onPress: () => disablePin(),
-                    },
-                  ]
-                );
-              }}
-              right={<Text style={{ color: colors.danger, fontSize: 18 }}>›</Text>}
-            />
-          )}
-        </Section>
 
         {/* ── Account ── */}
         <Section title="Account" colors={colors}>
@@ -410,13 +417,20 @@ export default function Settings() {
             onPress={handleLogout}
             right={<Text style={{ color: colors.textMuted, fontSize: 18 }}>›</Text>}
           />
-          <SettingRow
+          <ChevronRow
             label="Reset all data"
-            subtitle="Permanently deletes all envelopes and transactions"
-            colors={colors}
-            last
+            subtitle="Clears your budget but keeps your account"
             onPress={handleResetAll}
-            right={<Text style={{ color: colors.danger, fontSize: 18 }}>›</Text>}
+            colors={colors}
+            danger
+          />
+          <ChevronRow
+            label="Delete account"
+            subtitle="Permanently removes your account and all your data"
+            onPress={handleDeleteAccount}
+            colors={colors}
+            danger
+            last
           />
         </Section>
 
@@ -461,18 +475,5 @@ const row = StyleSheet.create({
   },
   value: {
     fontSize: typography.sm,
-  },
-});
-
-const act = StyleSheet.create({
-  pill: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-  },
-  pillText: {
-    fontSize: typography.xs,
-    fontWeight: typography.bold,
   },
 });

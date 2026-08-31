@@ -40,6 +40,7 @@ const defaultState = {
   overallocated: 0,
   bankBalance: null, // null = manual mode; a number = live bank balance supersedes the manual total
   lastBalanceSync: null, // timestamp (ms) of the last successful bank-balance fetch
+  bankAccountCount: 0,   // how many bank accounts are feeding that balance
   cycle: null,
 
   // Income schedule for smart auto-allocation
@@ -206,7 +207,12 @@ function reducer(state, action) {
       };
 
     case "SET_BANK_BALANCE":
-      return { ...state, bankBalance: action.bankBalance, lastBalanceSync: action.lastBalanceSync ?? null };
+      return {
+        ...state,
+        bankBalance:      action.bankBalance,
+        lastBalanceSync:  action.lastBalanceSync ?? null,
+        bankAccountCount: action.bankAccountCount ?? 0,
+      };
 
     case "CLEAR_BANK_DATA":
       // Drop bank-imported transactions and revert the top line to manual mode.
@@ -215,6 +221,7 @@ function reducer(state, action) {
         transactions: (state.transactions || []).filter((t) => !t.imported),
         bankBalance: null,
         lastBalanceSync: null,
+        bankAccountCount: 0,
       };
 
     // ── Categorisation rules ────────────────────────────────────────────────
@@ -486,11 +493,12 @@ export function BudgetProvider({ children }) {
   }, [state.envelopes, state.transactions, state.bankBalance, recomputeTotals]);
 
   // Set (or clear) the live bank balance. Passing null reverts to manual mode.
-  const setBankBalance = useCallback((amount) => {
+  const setBankBalance = useCallback((amount, accountCount) => {
     dispatch({
-      type:            "SET_BANK_BALANCE",
-      bankBalance:     amount == null ? null : Number(amount),
-      lastBalanceSync: amount == null ? null : Date.now(),
+      type:             "SET_BANK_BALANCE",
+      bankBalance:      amount == null ? null : Number(amount),
+      lastBalanceSync:  amount == null ? null : Date.now(),
+      bankAccountCount: amount == null ? 0 : Number(accountCount || 0),
     });
   }, []);
 
@@ -505,7 +513,7 @@ export function BudgetProvider({ children }) {
       });
       if (r.ok) {
         const j = await r.json();
-        if (typeof j.balance === "number") setBankBalance(j.balance);
+        if (typeof j.balance === "number") setBankBalance(j.balance, j.accountCount);
       }
     } catch { /* keep last known balance */ }
   }, [setBankBalance]);
@@ -1003,6 +1011,7 @@ export function BudgetProvider({ children }) {
       overallocated: state.overallocated,
       bankBalance: state.bankBalance,
       lastBalanceSync: state.lastBalanceSync,
+      bankAccountCount: state.bankAccountCount,
       setBankBalance,
       refreshBankBalance,
       disconnectBank,
