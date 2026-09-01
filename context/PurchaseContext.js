@@ -241,7 +241,16 @@ export function PurchaseProvider({ children }) {
         const wanted = planKey === "annual" ? "ANNUAL" : "MONTHLY";
         pkg = pkgs.find((p) => String(p?.packageType || "").toUpperCase() === wanted);
       }
-      if (!pkg) return { ok: false, error: "That plan isn't available in the store yet." };
+      // No package yet means the products don't exist in App Store Connect /
+      // Play Console. Testers can still simulate so the paid path stays testable.
+      if (!pkg) {
+        if (isTester && user?.id) {
+          await AsyncStorage.setItem(`subscribed_${user.id}`, "true");
+          setIsSubscribed(true);
+          return { ok: true, simulated: true };
+        }
+        return { ok: false, error: "That plan isn't available in the store yet." };
+      }
 
       const res = await Store.purchasePackage(pkg);
       if (res.ok && user?.id) {
