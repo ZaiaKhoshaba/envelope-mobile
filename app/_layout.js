@@ -386,6 +386,7 @@ function InnerLayout() {
         <Tabs.Screen name="transfer"        options={{ href: null, title: "Transfer Funds" }} />
         <Tabs.Screen name="pin-setup"       options={{ href: null, title: "Set Up PIN", tabBarStyle: { display: "none" } }} />
         <Tabs.Screen name="profile"         options={{ href: null, title: "Your account" }} />
+        <Tabs.Screen name="paywall"         options={{ href: null, title: "Tend Premium" }} />
         <Tabs.Screen name="data-consent"    options={{ href: null, title: "Data & consent" }} />
         <Tabs.Screen name="bank/callback"   options={{ href: null, headerShown: false }} />
       </Tabs>

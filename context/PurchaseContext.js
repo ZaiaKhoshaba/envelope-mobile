@@ -14,6 +14,10 @@ import React, {
 } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuth } from "./AuthContext";
+import * as Store from "../lib/purchases";
+
+const BACKEND_URL =
+  process.env.EXPO_PUBLIC_BANK_BACKEND_URL || "https://envelope-bank-backend.onrender.com";
 
 // ── Launch feature flags ───────────────────────────────────────────────────────
 // Flip these to true once Fiskl is integrated and subscriptions are live.
@@ -82,7 +86,11 @@ export const PLANS = {
 const PurchaseContext = createContext(null);
 
 export function PurchaseProvider({ children }) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
+
+  // The server's view of entitlement (subscription or trial). Authoritative when
+  // we have it — a local flag can be wrong after a reinstall or device change.
+  const [serverEnt, setServerEnt] = useState(null);
 
   const [trialStartDate,  setTrialStartDate]  = useState(null);
   const [isSubscribed,    setIsSubscribed]    = useState(false);
@@ -138,8 +146,42 @@ export function PurchaseProvider({ children }) {
     })();
   }, [user?.id]);
 
+  // Identify this user to RevenueCat, then confirm entitlement with the SDK.
+  // The app user ID must be the Tend user id so the admin panel, the webhook and
+  // the app all refer to the same customer.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!user?.id) { await Store.logOut(); return; }
+      const ready = await Store.configure(user.id);
+      if (!ready || cancelled) return;
+      const entitled = await Store.isEntitled();
+      if (!cancelled && entitled) {
+        setIsSubscribed(true);
+        await AsyncStorage.setItem(`subscribed_${user.id}`, "true");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user?.id]);
+
+  // Ask the server whether bank sync is available for this account.
+  const refreshEntitlement = useCallback(async () => {
+    if (!token) { setServerEnt(null); return; }
+    try {
+      const r = await fetch(`${BACKEND_URL}/me/entitlement`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (r.ok) {
+        const j = await r.json();
+        if (j?.ok) setServerEnt(j);
+      }
+    } catch { /* offline — fall back to local state */ }
+  }, [token]);
+
+  useEffect(() => { refreshEntitlement(); }, [refreshEntitlement]);
+
   // Days remaining in the trial (0 = expired)
-  const daysRemaining = useMemo(() => {
+  const localDaysRemaining = useMemo(() => {
     if (!trialStartDate) return TRIAL_DAYS;
     const elapsed = Math.floor(
       (Date.now() - new Date(trialStartDate).getTime()) / (1000 * 60 * 60 * 24)
@@ -147,16 +189,30 @@ export function PurchaseProvider({ children }) {
     return Math.max(0, TRIAL_DAYS - elapsed);
   }, [trialStartDate]);
 
-  const trialExpired = daysRemaining === 0;
+  // Only follow the server once it is actually enforcing entitlement. While
+  // enforcement is off the server never blocks, so the app must not gate either —
+  // otherwise an existing account whose server-side trial window has passed would
+  // suddenly lose bank features that still work perfectly.
+  const useServer = !!serverEnt && serverEnt.enforced === true;
+
+  const daysRemaining = useServer && serverEnt.reason === "trial" && typeof serverEnt.daysRemaining === "number"
+    ? serverEnt.daysRemaining
+    : localDaysRemaining;
+
+  const trialExpired = useServer
+    ? serverEnt.reason === "trial_expired"
+    : localDaysRemaining === 0;
 
   // When SUBSCRIPTIONS_ENABLED is false every user gets full access automatically.
   const isActive = !SUBSCRIPTIONS_ENABLED
     ? true
     : (!user?.id || isSubscribed || !trialExpired || isFreeUser);
 
-  // Bank access is disabled until Fiskl is integrated.
+  // Bank access: the server decides when it can tell us, since that's what the
+  // bank routes actually enforce. Falls back to local state when offline.
+  const localBankAccess = !user?.id || isSubscribed || !trialExpired;
   const hasBankAccess = BANK_ENABLED && !devForceFree
-    ? (!user?.id || isSubscribed || !trialExpired)
+    ? (useServer ? !!serverEnt.entitled : localBankAccess)
     : false;
 
   // ── Purchase ────────────────────────────────────────────────────────────────
@@ -173,6 +229,26 @@ export function PurchaseProvider({ children }) {
 
     console.log("[purchases] Purchase triggered:", plan.id);
 
+    // ── Real purchase, through the store ──────────────────────────────────────
+    if (Store.isAvailable()) {
+      const offering = await Store.getOfferings();
+      const pkgs = offering?.availablePackages || [];
+      let pkg = pkgs.find((p) => p?.product?.identifier === plan.id);
+      if (!pkg) {
+        const wanted = planKey === "annual" ? "ANNUAL" : "MONTHLY";
+        pkg = pkgs.find((p) => String(p?.packageType || "").toUpperCase() === wanted);
+      }
+      if (!pkg) return { ok: false, error: "That plan isn't available in the store yet." };
+
+      const res = await Store.purchasePackage(pkg);
+      if (res.ok && user?.id) {
+        await AsyncStorage.setItem(`subscribed_${user.id}`, "true");
+        setIsSubscribed(true);
+        refreshEntitlement(); // let the server catch up via the webhook
+      }
+      return res;
+    }
+
     // Test accounts can simulate a subscription so the paid experience can be
     // walked end-to-end before the stores are live. Never available to real users.
     if (isTester && user?.id) {
@@ -183,9 +259,10 @@ export function PurchaseProvider({ children }) {
 
     return {
       ok:    false,
-      error: "Payments aren't available yet — Tend isn't published to the App Store or Google Play. Your free trial keeps everything unlocked in the meantime.",
+      error: Store.unavailableReason()
+        || "Payments aren't available yet. Your free trial keeps everything unlocked in the meantime.",
     };
-  }, [user?.id, isTester]);
+  }, [user?.id, isTester, refreshEntitlement]);
 
   // ── Dev: force free user mode ─────────────────────────────────────────────
   const toggleDevForceFree = useCallback(async (value) => {
@@ -215,11 +292,23 @@ export function PurchaseProvider({ children }) {
 
   const restorePurchases = useCallback(async () => {
     console.log("[purchases] Restore triggered");
+
+    if (Store.isAvailable()) {
+      const res = await Store.restore();
+      if (res.ok && user?.id) {
+        await AsyncStorage.setItem(`subscribed_${user.id}`, "true");
+        setIsSubscribed(true);
+        refreshEntitlement();
+      }
+      return res;
+    }
+
     return {
       ok:    false,
-      error: "There's nothing to restore yet — Tend isn't published to the App Store or Google Play, so no purchases exist. Once it's live, this will bring back any subscription bought with your store account.",
+      error: Store.unavailableReason()
+        || "There's nothing to restore yet — no purchases exist until Tend is published.",
     };
-  }, []);
+  }, [user?.id, refreshEntitlement]);
 
   // ── Testing: flip your own account between paid and unpaid ─────────────────
   // Only works for accounts in TEST_ACCOUNTS. Once RevenueCat is wired up, the
@@ -247,11 +336,15 @@ export function PurchaseProvider({ children }) {
       toggleDevForceFree,
       isTester,
       setTestSubscription,
+      refreshEntitlement,
+      storeAvailable: Store.isAvailable(),
+      storeUnavailableReason: Store.unavailableReason(),
+      entitlementSource: serverEnt?.reason ?? null,
       PLANS,
       PRICING,
       TRIAL_DAYS,
     }),
-    [isLoading, isSubscribed, isFreeUser, isActive, hasBankAccess, trialExpired, daysRemaining, purchase, restorePurchases, continueForFree, devForceFree, toggleDevForceFree, isTester, setTestSubscription]
+    [isLoading, isSubscribed, isFreeUser, isActive, hasBankAccess, trialExpired, daysRemaining, purchase, restorePurchases, continueForFree, devForceFree, toggleDevForceFree, isTester, setTestSubscription, refreshEntitlement, serverEnt]
   );
 
   return (

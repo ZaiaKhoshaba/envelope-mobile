@@ -127,7 +127,7 @@ export default function Settings() {
   const { logout, deleteAccount, pinEnabled, disablePin } = useAuth();
   const {
     isSubscribed, isFreeUser, trialExpired, daysRemaining,
-    purchase, restorePurchases, isTester, setTestSubscription,
+    restorePurchases, isTester, setTestSubscription,
     devForceFree, toggleDevForceFree,
   } = usePurchase();
   const s = makeStyles(colors);
@@ -160,20 +160,6 @@ export default function Settings() {
       ? `Subscribe to turn bank sync back on — ${PLANS.monthly.price}/mo or ${PLANS.annual.price}/yr.`
       : "Everything is unlocked during your trial, including bank sync.";
 
-  const handlePurchase = useCallback(async (planKey) => {
-    const res = await purchase(planKey);
-    if (res?.ok) {
-      Alert.alert(
-        res.simulated ? "Premium enabled (test)" : "You're all set",
-        res.simulated
-          ? "Simulated subscription active on this test account."
-          : "Thanks for subscribing — Premium is now active."
-      );
-    } else {
-      Alert.alert("Not available yet", res?.error || "Something went wrong. Please try again.");
-    }
-  }, [purchase]);
-
   const openPlans = useCallback(() => {
     if (isSubscribed) {
       Alert.alert(
@@ -182,16 +168,8 @@ export default function Settings() {
       );
       return;
     }
-    Alert.alert(
-      "Upgrade to Premium",
-      `${PLANS.monthly.price}${PLANS.monthly.period} or ${PLANS.annual.price}${PLANS.annual.period}${PLANS.annual.savingTag ? ` (${PLANS.annual.savingTag})` : ""}.\n\nBank sync imports your transactions automatically so your envelopes stay accurate.`,
-      [
-        { text: "Not now", style: "cancel" },
-        { text: `${PLANS.monthly.price}/mo`, onPress: () => handlePurchase("monthly") },
-        { text: `${PLANS.annual.price}/yr`, onPress: () => handlePurchase("annual") },
-      ]
-    );
-  }, [isSubscribed, handlePurchase]);
+    router.push("/paywall");
+  }, [isSubscribed, router]);
 
   const handleRestore = useCallback(async () => {
     const res = await restorePurchases();

@@ -10,6 +10,7 @@ import {
   ScrollView,
   SafeAreaView,
 } from "react-native";
+import { useRouter } from "expo-router";
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -44,6 +45,7 @@ function StepRow({ number, title, body, done, colors }) {
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export default function BankConnectScreen() {
+  const router                    = useRouter();
   const [busy, setBusy]           = useState(false);
   const [connected, setConnected] = useState(false);
   const [checking, setChecking]   = useState(true);
@@ -127,9 +129,18 @@ export default function BankConnectScreen() {
               </View>
             ))}
           </View>
-          <Text style={{ fontSize: typography.sm, color: colors.textSecondary, textAlign: "center" }}>
-            Go to <Text style={{ fontWeight: typography.bold, color: colors.accent }}>Settings → Subscription</Text> to upgrade.
-          </Text>
+          <TouchableOpacity
+            style={{
+              width: "100%", backgroundColor: colors.accent, borderRadius: radius.lg,
+              paddingVertical: spacing.md, alignItems: "center",
+            }}
+            onPress={() => router.push("/paywall")}
+            activeOpacity={0.9}
+          >
+            <Text style={{ color: "#fff", fontSize: typography.md, fontWeight: typography.bold }}>
+              See plans
+            </Text>
+          </TouchableOpacity>
         </ScrollView>
       </SafeAreaView>
     );
