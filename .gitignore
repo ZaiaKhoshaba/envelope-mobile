@@ -30,9 +30,20 @@ yarn-error.*
 .DS_Store
 *.pem
 
+# store credentials — never commit these
+google-play-service-account.json
+*-service-account.json
+AuthKey_*.p8
+
 # local env files
+# NOTE: .env is already tracked (it holds only public EXPO_PUBLIC_ values), so
+# this rule does not cover it. Only ever put PUBLIC keys in .env — anything you
+# add there WILL be committed. Secret keys belong in Render's environment.
 .env
 .env*.local
+
+# build output
+.expo-export-check/
 
 # typescript
 *.tsbuildinfo
