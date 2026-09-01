@@ -39,10 +39,13 @@ export const TRIAL_DAYS = 30;
    set in App Store Connect / Play Console. These amounts are what Tend shows
    before the store prices load — keep them in step with the store.
    ═══════════════════════════════════════════════════════════════════════════ */
+// productId must match the store identifier configured in RevenueCat. These are
+// deliberately price-agnostic: store product IDs can never be renamed once the
+// stores have them, so the price must not be baked into the name.
 export const PRICING = {
   currency: "$",
-  monthly: { amount: 4.99,  productId: "envelopes_monthly_499" },
-  annual:  { amount: 29.99, productId: "envelopes_annual_2999" },
+  monthly: { amount: 4.99,  productId: "tend_premium_monthly" },
+  annual:  { amount: 29.99, productId: "tend_premium_annual" },
 };
 
 /* Accounts allowed to use the internal testing tools. Add your own logins here.
