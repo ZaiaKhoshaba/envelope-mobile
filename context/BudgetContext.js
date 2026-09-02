@@ -41,6 +41,9 @@ const defaultState = {
   bankBalance: null, // null = manual mode; a number = live bank balance supersedes the manual total
   lastBalanceSync: null, // timestamp (ms) of the last successful bank-balance fetch
   bankAccountCount: 0,   // how many bank accounts are feeding that balance
+  // When the bank was first connected. Spending from before this is history the
+  // user was never going to allocate; spending after it is live and needs sorting.
+  bankConnectedAt: null,
   cycle: null,
 
   // Income schedule for smart auto-allocation
@@ -212,6 +215,10 @@ function reducer(state, action) {
         bankBalance:      action.bankBalance,
         lastBalanceSync:  action.lastBalanceSync ?? null,
         bankAccountCount: action.bankAccountCount ?? 0,
+        // Stamped once, on the first successful connection; cleared on disconnect.
+        bankConnectedAt:  action.bankBalance == null
+          ? null
+          : (state.bankConnectedAt || new Date().toISOString()),
       };
 
     case "CLEAR_BANK_DATA":
@@ -222,6 +229,7 @@ function reducer(state, action) {
         bankBalance: null,
         lastBalanceSync: null,
         bankAccountCount: 0,
+        bankConnectedAt: null,
       };
 
     // ── Categorisation rules ────────────────────────────────────────────────
@@ -1012,6 +1020,7 @@ export function BudgetProvider({ children }) {
       bankBalance: state.bankBalance,
       lastBalanceSync: state.lastBalanceSync,
       bankAccountCount: state.bankAccountCount,
+      bankConnectedAt: state.bankConnectedAt,
       setBankBalance,
       refreshBankBalance,
       disconnectBank,

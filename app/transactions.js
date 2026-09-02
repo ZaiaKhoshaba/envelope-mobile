@@ -15,14 +15,28 @@ import { usePurchase } from "../context/PurchaseContext";
 import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
 import { fmt } from "../lib/format";
 
+// A bank transaction counts as history only if it happened before the bank was
+// connected. Everything since is live spending the user is meant to allocate.
+function isHistoricalTx(t, bankConnectedAt) {
+  if (!t.imported) return false;          // manually added — never "imported"
+  if (!bankConnectedAt) return false;     // no connection recorded — treat as live
+  const when = t.postedAt || t.createdAt;
+  if (!when) return false;
+  const at = Date.parse(when);
+  const connected = Date.parse(bankConnectedAt);
+  if (Number.isNaN(at) || Number.isNaN(connected)) return false;
+  return at < connected;
+}
+
 // ── Status pill ───────────────────────────────────────────────────────────────
 
-function StatusPill({ imported, isIncome, isSpend, allocated, colors }) {
+function StatusPill({ historical, isIncome, isSpend, allocated, colors }) {
   let bg, border, textColor, label;
 
   if (isIncome) {
     bg = colors.successBg; border = colors.success; textColor = colors.success; label = "Income";
-  } else if (imported) {
+  } else if (historical) {
+    // Spending from before the bank was connected — history, not a to-do.
     bg = colors.cardAlt; border = colors.border; textColor = colors.textSecondary; label = "Imported";
   } else if (isSpend && allocated) {
     bg = colors.accentSoft; border = colors.accent; textColor = colors.accent; label = "Allocated";
@@ -41,9 +55,13 @@ function StatusPill({ imported, isIncome, isSpend, allocated, colors }) {
 
 // ── Transaction card ──────────────────────────────────────────────────────────
 
-function TxCard({ t, onAllocate, envelopes, colors }) {
+function TxCard({ t, onAllocate, envelopes, colors, bankConnectedAt }) {
   const isIncome = t.kind === "income";
   const isSpend  = t.kind === "spend";
+
+  // "Imported" is only for spending that predates the bank connection. Anything
+  // that happened after you connected is live spending waiting to be allocated.
+  const isHistorical = isHistoricalTx(t, bankConnectedAt);
 
   const displaySign = isIncome ? "+" : "-";
   const amountAbs   = fmt(Math.abs(Number(t.amount) || 0));
@@ -80,7 +98,7 @@ function TxCard({ t, onAllocate, envelopes, colors }) {
       {/* Status pill + remaining */}
       <View style={txcard.midRow}>
         <StatusPill
-          imported={!!t.imported}
+          historical={isHistorical}
           isIncome={isIncome}
           isSpend={isSpend}
           allocated={isAllocated}
@@ -112,8 +130,8 @@ function TxCard({ t, onAllocate, envelopes, colors }) {
         </View>
       )}
 
-      {/* Allocate button for outstanding spends */}
-      {isSpend && !t.imported && !isAllocated && (
+      {/* Allocate button for outstanding spends — including ones from the bank */}
+      {isSpend && !isHistorical && !isAllocated && (
         <TouchableOpacity
           style={[txcard.allocBtn, { backgroundColor: colors.accent }]}
           onPress={() => onAllocate(t)}
@@ -129,7 +147,7 @@ function TxCard({ t, onAllocate, envelopes, colors }) {
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export default function TransactionsScreen() {
-  const { state, allocateOutstanding, unallocated, importBankTransactions } = useBudget();
+  const { state, allocateOutstanding, unallocated, importBankTransactions, bankConnectedAt } = useBudget();
   const { hasBankAccess } = usePurchase();
   const { colors } = useTheme();
   const s = makeStyles(colors);
@@ -147,19 +165,27 @@ export default function TransactionsScreen() {
     });
     if (filter === "income")      return list.filter(t => t.kind === "income");
     if (filter === "spend")       return list.filter(t => t.kind === "spend");
-    if (filter === "outstanding") return list.filter(t => t.kind === "spend" && !t.allocated);
+    if (filter === "outstanding") {
+      return list.filter(
+        t => t.kind === "spend" && !t.allocated && !isHistoricalTx(t, bankConnectedAt)
+      );
+    }
     return list;
-  }, [state.transactions, filter]);
+  }, [state.transactions, filter, bankConnectedAt]);
 
   const envelopesSorted = useMemo(
     () => [...state.envelopes].sort((a, b) => b.amount - a.amount),
     [state.envelopes]
   );
 
+  // Anything unallocated that isn't pre-connection history still needs sorting,
+  // whether it was typed in by hand or came from the bank.
   const outstandingCount = useMemo(
-  () => state.transactions.filter(t => t.kind === "spend" && !t.allocated && !t.imported).length,
-  [state.transactions]
-);
+    () => state.transactions.filter(
+      t => t.kind === "spend" && !t.allocated && !isHistoricalTx(t, bankConnectedAt)
+    ).length,
+    [state.transactions, bankConnectedAt]
+  );
 
   const openChooser  = useCallback(tx => setChooserForTx(tx), []);
   const closeChooser = useCallback(() => setChooserForTx(null), []);
@@ -187,8 +213,9 @@ export default function TransactionsScreen() {
       onAllocate={openChooser}
       envelopes={state.envelopes}
       colors={colors}
+      bankConnectedAt={bankConnectedAt}
     />
-  ), [openChooser, state.envelopes, colors]);
+  ), [openChooser, state.envelopes, colors, bankConnectedAt]);
 
   return (
     <SafeAreaView style={s.screen}>
