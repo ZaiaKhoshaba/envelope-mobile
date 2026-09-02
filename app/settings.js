@@ -24,6 +24,7 @@ const DEV_UNLOCK_TAPS = 5;
 
 // Public pages — update these if the URLs change.
 const PRIVACY_URL = "https://zaiakhoshaba.github.io/tend-privacy-policy/";
+const TERMS_URL   = "https://zaiakhoshaba.github.io/tend-privacy-policy/terms.html";
 const SUPPORT_EMAIL = "tend.budget.app@outlook.com";
 
 function timeAgo(ts) {
@@ -328,6 +329,12 @@ export default function Settings() {
             label="Privacy policy"
             subtitle="How your data is handled"
             onPress={() => Linking.openURL(PRIVACY_URL)}
+            colors={colors}
+          />
+          <ChevronRow
+            label="Terms of service"
+            subtitle="The agreement you're using Tend under"
+            onPress={() => Linking.openURL(TERMS_URL)}
             colors={colors}
             last
           />

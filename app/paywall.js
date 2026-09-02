@@ -22,6 +22,7 @@ import * as Store from "../lib/purchases";
 import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
 
 const PRIVACY_URL = "https://zaiakhoshaba.github.io/tend-privacy-policy/";
+const TERMS_URL   = "https://zaiakhoshaba.github.io/tend-privacy-policy/terms.html";
 
 const BENEFITS = [
   { icon: "sync",              text: "Your real bank balance, always up to date" },
@@ -197,9 +198,14 @@ export default function Paywall() {
             Subscriptions renew automatically until cancelled. Manage or cancel any time in your
             App Store or Google Play account settings.
           </Text>
-          <TouchableOpacity onPress={() => Linking.openURL(PRIVACY_URL)} activeOpacity={0.7}>
-            <Text style={[w.fine, { color: colors.accent }]}>Privacy policy</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: "row", gap: spacing.md }}>
+            <TouchableOpacity onPress={() => Linking.openURL(TERMS_URL)} activeOpacity={0.7}>
+              <Text style={[w.fine, { color: colors.accent }]}>Terms of service</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => Linking.openURL(PRIVACY_URL)} activeOpacity={0.7}>
+              <Text style={[w.fine, { color: colors.accent }]}>Privacy policy</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
       </ScrollView>
