@@ -21,15 +21,15 @@ const light = {
   textSecondary:'#6B7280',
   textMuted:    '#9CA3AF',
 
-  // Brand
-  accent:       '#2563EB',   // primary blue
-  accentSoft:   '#EFF4FF',   // blue tint background
+  // Brand — Deep Indigo, matching the app icon
+  accent:       '#4338CA',   // primary indigo
+  accentSoft:   '#EEF0FE',   // indigo tint background
 
   // Envelope types  (Black = fixed, White = flexible — your original naming)
   fixed:        '#0D0F14',   // "black envelope" label colour
   fixedBg:      '#F0F1F7',
-  flexible:     '#2563EB',   // "white envelope" label colour
-  flexibleBg:   '#EFF4FF',
+  flexible:     '#4338CA',   // "white envelope" label colour
+  flexibleBg:   '#EEF0FE',
 
   // Status
   success:      '#10B981',
@@ -54,13 +54,13 @@ const dark = {
   textSecondary:'#9BA3B4',
   textMuted:    '#6B7280',
 
-  accent:       '#3B82F6',
-  accentSoft:   '#1E3A5F',
+  accent:       '#818CF8',   // lighter indigo, for contrast on dark
+  accentSoft:   '#252150',
 
   fixed:        '#E2E8F0',
   fixedBg:      '#1C2030',
-  flexible:     '#60A5FA',
-  flexibleBg:   '#1E3A5F',
+  flexible:     '#A5B4FC',
+  flexibleBg:   '#252150',
 
   success:      '#10B981',
   successBg:    '#064E3B',

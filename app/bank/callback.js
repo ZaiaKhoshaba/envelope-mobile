@@ -61,7 +61,7 @@ export default function BankCallback() {
     <View style={styles.container}>
       {status === "processing" && (
         <>
-          <ActivityIndicator size="large" color="#2563EB" style={{ marginBottom: 16 }} />
+          <ActivityIndicator size="large" color="#4338CA" style={{ marginBottom: 16 }} />
           <Text style={styles.title}>Finishing connection…</Text>
         </>
       )}
