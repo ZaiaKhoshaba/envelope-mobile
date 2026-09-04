@@ -18,8 +18,10 @@ import { fmt } from "../lib/format";
 // A bank transaction counts as history only if it happened before the bank was
 // connected. Everything since is live spending the user is meant to allocate.
 function isHistoricalTx(t, bankConnectedAt) {
-  if (!t.imported) return false;          // manually added — never "imported"
-  if (!bankConnectedAt) return false;     // no connection recorded — treat as live
+  if (!t.imported) return false;                    // typed in by hand — never "imported"
+  if (typeof t.historical === "boolean") return t.historical; // stamped at import — authoritative
+  // Fallback for transactions imported before the flag existed.
+  if (!bankConnectedAt) return false;
   const when = t.postedAt || t.createdAt;
   if (!when) return false;
   const at = Date.parse(when);

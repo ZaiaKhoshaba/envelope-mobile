@@ -258,6 +258,19 @@ export default function Settings() {
             onPress={openPlans}
             colors={colors}
           />
+          {/* An explicit way in. Without this the only route to the paywall was
+              tapping the status row, which reads as information, not an action —
+              so during a trial there appeared to be no way to subscribe at all. */}
+          {!isSubscribed && (
+            <ChevronRow
+              label={trialExpired ? "Subscribe" : "See plans and subscribe"}
+              subtitle={`${PLANS.monthly.price}/month or ${PLANS.annual.price}/year${
+                trialExpired ? "" : " — subscribe any time during your trial"
+              }`}
+              onPress={openPlans}
+              colors={colors}
+            />
+          )}
           <ChevronRow
             label="Restore purchases"
             subtitle="Already subscribed on another device?"

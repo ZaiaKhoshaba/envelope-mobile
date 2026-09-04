@@ -221,6 +221,11 @@ function reducer(state, action) {
           : (state.bankConnectedAt || new Date().toISOString()),
       };
 
+    case "SET_BANK_CONNECTED_AT":
+      // Stamped by the first import after a connection, so the boundary between
+      // "history" and "needs allocating" does not depend on a balance arriving.
+      return { ...state, bankConnectedAt: action.at || null };
+
     case "CLEAR_BANK_DATA":
       // Drop bank-imported transactions and revert the top line to manual mode.
       return {
@@ -918,11 +923,33 @@ export function BudgetProvider({ children }) {
         return { ok: true, imported: 0, message: "Already up to date." };
       }
 
+      // Everything that already existed when the bank was connected is history.
+      // Nobody wants to open the app and be handed a backlog of forty past
+      // purchases to sort — only spending that happens AFTER connecting needs
+      // allocating. The verdict is stamped onto each transaction here rather
+      // than worked out when rendering, so it survives reloads, disconnects
+      // and a missing balance sync.
+      const firstConnection = !state.bankConnectedAt;
+      const connectedAt     = state.bankConnectedAt || new Date().toISOString();
+      const connectedMs     = Date.parse(connectedAt);
+      if (firstConnection) {
+        dispatch({ type: "SET_BANK_CONNECTED_AT", at: connectedAt });
+      }
+
       // Apply categorisation rules to unallocated spends
       let envelopes = state.envelopes;
       let autoCount = 0;
-      const processed = fresh.map(tx => {
-        if (tx.kind !== "spend" || tx.allocated) return tx;
+      const processed = fresh.map(raw => {
+        const postedMs = Date.parse(raw.postedAt || raw.createdAt || "");
+        const historical =
+          firstConnection ||
+          (Number.isFinite(postedMs) && Number.isFinite(connectedMs) && postedMs <= connectedMs);
+
+        const tx = { ...raw, historical };
+
+        // Past spending is a record, not a to-do: never auto-allocate it, or it
+        // would drain envelopes for money that was spent before the user began.
+        if (historical || tx.kind !== "spend" || tx.allocated) return tx;
         const rule = findRuleMatch(state.rules, tx.merchant);
         if (!rule) return tx;
         const env = envelopes.find(e => e.id === rule.envelopeId);
@@ -950,11 +977,22 @@ export function BudgetProvider({ children }) {
 
       dispatch({ type: "ALLOCATE", envelopes, transactions: merged });
 
+      const needsAllocating = processed.filter(
+        (t) => t.kind === "spend" && !t.historical && !t.allocated
+      ).length;
+      const asHistory = processed.filter((t) => t.historical).length;
+
       return {
         ok: true,
         imported: fresh.length,
         autoAllocated: autoCount,
-        message: `Imported ${fresh.length} transaction(s)${autoCount ? ` — ${autoCount} auto-allocated` : ""}.`,
+        needsAllocating,
+        historical: asHistory,
+        message: asHistory && !needsAllocating
+          ? `Imported ${asHistory} past transaction(s) as history — nothing to allocate.`
+          : `Imported ${fresh.length} transaction(s)${
+              asHistory ? ` — ${asHistory} logged as history` : ""
+            }${autoCount ? `, ${autoCount} auto-allocated` : ""}.`,
       };
     } catch (e) {
       console.log("importBankTransactions error:", e);
