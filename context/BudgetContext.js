@@ -44,6 +44,7 @@ const defaultState = {
   // When the bank was first connected. Spending from before this is history the
   // user was never going to allocate; spending after it is live and needs sorting.
   bankConnectedAt: null,
+  balanceAsOf: null,      // when the BANK last updated the balance (from Fiskil as_of)
   cycle: null,
 
   // Income schedule for smart auto-allocation
@@ -219,6 +220,7 @@ function reducer(state, action) {
         bankConnectedAt:  action.bankBalance == null
           ? null
           : (state.bankConnectedAt || new Date().toISOString()),
+        balanceAsOf:      action.balanceAsOf ?? null,
       };
 
     case "SET_BANK_CONNECTED_AT":
@@ -235,6 +237,7 @@ function reducer(state, action) {
         lastBalanceSync: null,
         bankAccountCount: 0,
         bankConnectedAt: null,
+        balanceAsOf: null,
       };
 
     // ── Categorisation rules ────────────────────────────────────────────────
@@ -506,12 +509,15 @@ export function BudgetProvider({ children }) {
   }, [state.envelopes, state.transactions, state.bankBalance, recomputeTotals]);
 
   // Set (or clear) the live bank balance. Passing null reverts to manual mode.
-  const setBankBalance = useCallback((amount, accountCount) => {
+  const setBankBalance = useCallback((amount, accountCount, asOf) => {
     dispatch({
       type:             "SET_BANK_BALANCE",
       bankBalance:      amount == null ? null : Number(amount),
       lastBalanceSync:  amount == null ? null : Date.now(),
       bankAccountCount: amount == null ? 0 : Number(accountCount || 0),
+      // When the BANK last updated the figure. lastBalanceSync is only when we
+      // asked; showing that as the age makes stale CDR data look current.
+      balanceAsOf:      amount == null ? null : (asOf || null),
     });
   }, []);
 
@@ -526,7 +532,7 @@ export function BudgetProvider({ children }) {
       });
       if (r.ok) {
         const j = await r.json();
-        if (typeof j.balance === "number") setBankBalance(j.balance, j.accountCount);
+        if (typeof j.balance === "number") setBankBalance(j.balance, j.accountCount, j.asOf);
       }
     } catch { /* keep last known balance */ }
   }, [setBankBalance]);
@@ -1059,6 +1065,7 @@ export function BudgetProvider({ children }) {
       lastBalanceSync: state.lastBalanceSync,
       bankAccountCount: state.bankAccountCount,
       bankConnectedAt: state.bankConnectedAt,
+      balanceAsOf: state.balanceAsOf,
       setBankBalance,
       refreshBankBalance,
       disconnectBank,

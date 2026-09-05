@@ -441,7 +441,7 @@ function SetupChecklist({ state, router, colors, bankConnected }) {
 export default function Home() {
   const router  = useRouter();
   const { colors, isDark, toggle } = useTheme();
-  const { total, allocated, unallocated, overallocated, state, bankBalance, lastBalanceSync, refreshBankBalance, importBankTransactions } = useBudget();
+  const { total, allocated, unallocated, overallocated, state, bankBalance, lastBalanceSync, balanceAsOf, refreshBankBalance, importBankTransactions } = useBudget();
   const { isAuthenticated, loading, user } = useAuth();
 
   useEffect(() => {
@@ -557,7 +557,12 @@ export default function Home() {
             <Text style={{ color: "rgba(255,255,255,0.85)", fontSize: typography.xs, marginTop: 4, marginBottom: 2 }}>
               {refreshing
                 ? "Updating…"
-                : `From your bank ${timeAgo(lastBalanceSync)} · pull down to refresh`}
+                : /* Age of the BANK's figure, not of our request. Asking again does
+                     not make the bank's data newer, so reporting our fetch time
+                     made stale CDR data look current. */
+                  `Your bank last updated this ${timeAgo(
+                    balanceAsOf ? Date.parse(balanceAsOf) : lastBalanceSync
+                  )} · pull down to check again`}
             </Text>
           )}
           <View style={styles.heroBarTrack}>
