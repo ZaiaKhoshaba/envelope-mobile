@@ -19,7 +19,10 @@
         "distribution": "store"
       },
       "env": {
-        "EXPO_PUBLIC_BANK_BACKEND_URL": "https://envelope-bank-backend.onrender.com"
+        "EXPO_PUBLIC_BANK_BACKEND_URL": "https://envelope-bank-backend.onrender.com",
+        "EXPO_PUBLIC_REVENUECAT_IOS_KEY": "appl_heAiNNcpYEdOGdUfaDjIpJqFFdU",
+        "EXPO_PUBLIC_REVENUECAT_ANDROID_KEY": "goog_RrGnuWFfHCudTzLvPEjzlrcpSbu",
+        "EXPO_PUBLIC_REVENUECAT_ENTITLEMENT": "premium"
       }
     },
     "production": {
@@ -31,7 +34,10 @@
         "buildConfiguration": "Release"
       },
       "env": {
-        "EXPO_PUBLIC_BANK_BACKEND_URL": "https://envelope-bank-backend.onrender.com"
+        "EXPO_PUBLIC_BANK_BACKEND_URL": "https://envelope-bank-backend.onrender.com",
+        "EXPO_PUBLIC_REVENUECAT_IOS_KEY": "appl_heAiNNcpYEdOGdUfaDjIpJqFFdU",
+        "EXPO_PUBLIC_REVENUECAT_ANDROID_KEY": "goog_RrGnuWFfHCudTzLvPEjzlrcpSbu",
+        "EXPO_PUBLIC_REVENUECAT_ENTITLEMENT": "premium"
       }
     }
   },

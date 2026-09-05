@@ -36,20 +36,31 @@ export default function Paywall() {
   const { colors } = useTheme();
   const {
     purchase, restorePurchases, isSubscribed,
-    trialExpired, daysRemaining, storeAvailable,
+    trialExpired, daysRemaining, storeAvailable, storeUnavailableReason, isTester,
   } = usePurchase();
   const s = makeStyles(colors);
 
   const [offering, setOffering] = useState(null);
   const [selected, setSelected] = useState("annual");
   const [busy, setBusy]         = useState(false);
+  // Why the store isn't serving prices. Shown to test accounts only — without it
+  // an empty paywall is indistinguishable from a missing key, a missing native
+  // module, or products Google hasn't finished propagating.
+  const [diag, setDiag] = useState(null);
 
   // Live store prices when we can get them
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const cur = await Store.getOfferings();
-      if (!cancelled) setOffering(cur);
+      if (cancelled) return;
+      setOffering(cur);
+      setDiag({
+        sdk: Store.isAvailable() ? "available" : "UNAVAILABLE",
+        reason: Store.unavailableReason() || "-",
+        packages: cur?.availablePackages?.length ?? 0,
+        offering: cur?.identifier || "none",
+      });
     })();
     return () => { cancelled = true; };
   }, []);
@@ -189,6 +200,12 @@ export default function Paywall() {
 
         {/* ── Small print (store requirement) ── */}
         <View style={{ gap: spacing.xs, alignItems: "center" }}>
+          {isTester && diag && (
+            <Text style={[w.fine, { color: colors.warning, textAlign: "center" }]}>
+              {`store: ${diag.sdk} · offering: ${diag.offering} · packages: ${diag.packages}`}
+              {diag.reason !== "-" ? `\n${diag.reason}` : ""}
+            </Text>
+          )}
           {!storeAvailable && (
             <Text style={[w.fine, { color: colors.textMuted }]}>
               Payments become available once Tend is published to the App Store and Google Play.
