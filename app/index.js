@@ -470,6 +470,21 @@ export default function Home() {
     return () => sub.remove();
   }, [bankBalance, refreshBankBalance, importBankTransactions]);
 
+  // Poll while the user is actually looking at this screen. Focus and foreground
+  // events only fire when they navigate or switch apps — sit on the home screen
+  // after moving money and nothing would update, which reads as the app being
+  // wrong rather than simply not having asked the bank again yet.
+  useFocusEffect(
+    useCallback(() => {
+      if (bankBalance == null) return undefined;
+      const id = setInterval(() => {
+        refreshBankBalance();
+        importBankTransactions();
+      }, 60_000);
+      return () => clearInterval(id);
+    }, [bankBalance, refreshBankBalance, importBankTransactions])
+  );
+
   if (loading || !isAuthenticated) return null;
 
   const envelopes   = state?.envelopes ?? [];
@@ -540,7 +555,9 @@ export default function Home() {
           <Text style={styles.heroValue}>${fmt(total)}</Text>
           {bankBalance != null && (
             <Text style={{ color: "rgba(255,255,255,0.85)", fontSize: typography.xs, marginTop: 4, marginBottom: 2 }}>
-              {refreshing ? "Updating…" : `Synced ${timeAgo(lastBalanceSync)} · pull down to refresh`}
+              {refreshing
+                ? "Updating…"
+                : `From your bank ${timeAgo(lastBalanceSync)} · pull down to refresh`}
             </Text>
           )}
           <View style={styles.heroBarTrack}>

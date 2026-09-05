@@ -155,11 +155,13 @@ export default function Settings() {
     : trialExpired ? "Trial expired"
     : `Free trial — ${daysRemaining} day${daysRemaining !== 1 ? "s" : ""} left`;
 
+  // One row, not two. The status alone read as information rather than an action,
+  // so the subtitle has to carry the invitation and the price.
   const planSubtitle = isSubscribed
     ? "Bank sync, spend alerts and one-tap allocation are on."
     : trialExpired
       ? `Subscribe to turn bank sync back on — ${PLANS.monthly.price}/mo or ${PLANS.annual.price}/yr.`
-      : "Everything is unlocked during your trial, including bank sync.";
+      : `Tap to see plans — ${PLANS.monthly.price}/mo or ${PLANS.annual.price}/yr. Subscribe any time.`;
 
   const openPlans = useCallback(() => {
     if (isSubscribed) {
@@ -258,19 +260,6 @@ export default function Settings() {
             onPress={openPlans}
             colors={colors}
           />
-          {/* An explicit way in. Without this the only route to the paywall was
-              tapping the status row, which reads as information, not an action —
-              so during a trial there appeared to be no way to subscribe at all. */}
-          {!isSubscribed && (
-            <ChevronRow
-              label={trialExpired ? "Subscribe" : "See plans and subscribe"}
-              subtitle={`${PLANS.monthly.price}/month or ${PLANS.annual.price}/year${
-                trialExpired ? "" : " — subscribe any time during your trial"
-              }`}
-              onPress={openPlans}
-              colors={colors}
-            />
-          )}
           <ChevronRow
             label="Restore purchases"
             subtitle="Already subscribed on another device?"
