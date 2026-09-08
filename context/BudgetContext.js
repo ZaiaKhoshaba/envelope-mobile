@@ -286,7 +286,20 @@ function reducer(state, action) {
       });
       return reducer(state, {
         type: "LOAD_STATE",
-        payload: { ...incoming, transactions: mergedTxs },
+        payload: {
+          ...incoming,
+          transactions: mergedTxs,
+          // Bank state is LIVE data owned by this device — it comes from the
+          // balance API, never from the cloud copy. Letting the cloud payload
+          // overwrite it meant every cold start showed whatever the cloud held
+          // (a stale figure, or null → the manual ledger total) until the next
+          // pull-to-refresh replaced it. Keep the device's values.
+          bankBalance:      state.bankBalance,
+          lastBalanceSync:  state.lastBalanceSync,
+          balanceAsOf:      state.balanceAsOf,
+          bankAccountCount: state.bankAccountCount,
+          bankConnectedAt:  state.bankConnectedAt ?? incoming.bankConnectedAt ?? null,
+        },
       });
     }
 
@@ -333,14 +346,24 @@ function autoAllocateIncome({ incomeAmount, envelopes }) {
 // The slice of state that gets persisted locally.
 // pendingSpend is deliberately excluded (a stale modal shouldn't reappear
 // on another device or after a restart).
+// Bank-derived fields that live ONLY on the device. Saved locally so a cold
+// start shows the last-known balance (with its honest age) instead of falling
+// back to the manual ledger total until the user pulls to refresh — and so the
+// refresh triggers, which are gated on a balance being present, actually fire.
+const BANK_LOCAL_FIELDS = [
+  "bankBalance", "lastBalanceSync", "balanceAsOf", "bankAccountCount", "bankConnectedAt",
+];
+
 function pickPersisted(state) {
-  return {
+  const out = {
     envelopes:      state.envelopes,
     transactions:   state.transactions,
     incomeSchedule: state.incomeSchedule,
     rules:          state.rules,
     cycle:          state.cycle,
   };
+  for (const k of BANK_LOCAL_FIELDS) out[k] = state[k] ?? null;
+  return out;
 }
 
 // The slice that syncs to the cloud. Bank-imported transactions are
@@ -350,10 +373,15 @@ function pickPersisted(state) {
 // across devices; only the imported transaction records stay device-local.
 function pickCloudPersisted(stateLike) {
   const base = pickPersisted(stateLike);
-  return {
+  const cloud = {
     ...base,
     transactions: (base.transactions || []).filter((t) => !t.imported),
   };
+  // The balance is CDR data too. It stays on the device, same as the imported
+  // transactions — the privacy policy says bank data is never written to our
+  // database, and that has to be true of the balance as well.
+  for (const k of BANK_LOCAL_FIELDS) delete cloud[k];
+  return cloud;
 }
 
 // Normalise any transaction-ish object (backend, webhook, or legacy shape)
@@ -937,19 +965,32 @@ export function BudgetProvider({ children }) {
       // and a missing balance sync.
       const firstConnection = !state.bankConnectedAt;
       const connectedAt     = state.bankConnectedAt || new Date().toISOString();
-      const connectedMs     = Date.parse(connectedAt);
       if (firstConnection) {
         dispatch({ type: "SET_BANK_CONNECTED_AT", at: connectedAt });
       }
+
+      // Compare CALENDAR DAYS, not timestamps. Banks post transactions with a
+      // date, not a time — often literally midnight — so a millisecond compare
+      // against a 10pm connection stamp filed every transaction from the
+      // connection day as history, including spending made AFTER connecting.
+      // Same day as the connection counts as live: better to ask the user to
+      // sort one extra item than to silently bury a real purchase.
+      const dayKey = (v) => {
+        const d = new Date(v);
+        if (Number.isNaN(d.getTime())) return null;
+        const p = (n) => String(n).padStart(2, "0");
+        return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+      };
+      const connectedDay = dayKey(connectedAt);
 
       // Apply categorisation rules to unallocated spends
       let envelopes = state.envelopes;
       let autoCount = 0;
       const processed = fresh.map(raw => {
-        const postedMs = Date.parse(raw.postedAt || raw.createdAt || "");
+        const postedDay = dayKey(raw.postedAt || raw.createdAt || "");
         const historical =
           firstConnection ||
-          (Number.isFinite(postedMs) && Number.isFinite(connectedMs) && postedMs <= connectedMs);
+          (!!postedDay && !!connectedDay && postedDay < connectedDay);
 
         const tx = { ...raw, historical };
 
