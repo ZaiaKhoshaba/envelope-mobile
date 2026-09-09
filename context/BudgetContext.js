@@ -733,6 +733,40 @@ export function BudgetProvider({ children }) {
   );
 
   /**
+   * Apply a transfer between the user's own accounts to an envelope.
+   *
+   * The opposite of allocating a spend. Spending money means taking it OUT of an
+   * envelope; moving money to your savings account means deciding to set it
+   * aside, which in envelope terms means putting it IN — funded from unallocated
+   * money, since the total never changed.
+   */
+  const fundEnvelopeFromTransfer = useCallback(
+    (txId, envelopeId) => {
+      const tx = state.transactions.find((t) => String(t.id) === String(txId));
+      if (!tx) return { ok: false, message: "That transaction is no longer here." };
+
+      const amount = round2(Math.abs(Number(tx.amount) || 0));
+      if (!amount) return { ok: false, message: "Nothing to move." };
+
+      const envelopes = state.envelopes.map((e) =>
+        e.id === envelopeId ? { ...e, amount: round2(Number(e.amount || 0) + amount) } : e
+      );
+      const env = envelopes.find((e) => e.id === envelopeId);
+      if (!env) return { ok: false, message: "That envelope no longer exists." };
+
+      const transactions = state.transactions.map((t) =>
+        String(t.id) === String(txId)
+          ? { ...t, allocated: true, allocations: [{ sourceId: envelopeId, used: amount, funded: true }] }
+          : t
+      );
+
+      dispatch({ type: "ALLOCATE", envelopes, transactions });
+      return { ok: true, message: `$${fmt(amount)} set aside in ${env.name}` };
+    },
+    [state.envelopes, state.transactions]
+  );
+
+  /**
    * Allocate several transactions to one envelope in a single pass.
    *
    * Doing this one at a time meant a week of spending was a week of taps, which
@@ -1240,6 +1274,7 @@ export function BudgetProvider({ children }) {
       allocateToEnvelope,
       allocateOutstanding,
       allocateMany,
+      fundEnvelopeFromTransfer,
       deleteEnvelope,
       reorderEnvelopes,
       editEnvelope,
@@ -1283,6 +1318,7 @@ export function BudgetProvider({ children }) {
       allocateToEnvelope,
       allocateOutstanding,
       allocateMany,
+      fundEnvelopeFromTransfer,
       deleteEnvelope,
       reorderEnvelopes,
       editEnvelope,

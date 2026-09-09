@@ -295,9 +295,14 @@ function PinLockModal() {
 
 // ── Inner layout ──────────────────────────────────────────────────────────────
 
+// The four real tabs. Everything else in the navigator is a pushed screen and
+// needs a back button, since a tab bar never draws one.
+const TAB_ROUTES = new Set(["index", "envelopes", "transactions", "settings"]);
+
 function InnerLayout() {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
 
   usePushNotifications();
   useIdleReminder();
@@ -315,6 +320,24 @@ function InnerLayout() {
             fontWeight: typography.bold,
             fontSize:   typography.lg,
           },
+          // Every screen here is a tab, and a tab bar draws no back arrow — so
+          // pushed screens like Add Income, New Envelope or Your Account had a
+          // title and no way back except the tab bar, which loses your place.
+          // The four real tabs are destinations and correctly have no back
+          // button; everything else is pushed and gets one.
+          headerLeft: TAB_ROUTES.has(route.name)
+            ? undefined
+            : () => (
+                <TouchableOpacity
+                  onPress={() => (router.canGoBack() ? router.back() : router.replace("/"))}
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                  style={{ paddingHorizontal: spacing.lg, paddingVertical: spacing.xs }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Go back"
+                >
+                  <Ionicons name="chevron-back" size={26} color={colors.accent} />
+                </TouchableOpacity>
+              ),
           tabBarStyle: {
             backgroundColor: colors.card,
             borderTopColor:  colors.border,

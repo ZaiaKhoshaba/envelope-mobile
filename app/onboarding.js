@@ -8,7 +8,7 @@
 //   Step 5 — Forecasting shortfalls
 //   Step 6 — Connect your bank (or skip)
 // ─────────────────────────────────────────────────────────────────────────────
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useMemo, useCallback } from "react";
 import {
   View,
   Text,
@@ -19,7 +19,7 @@ import {
   Animated,
   Alert,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { useTheme, spacing, radius, typography } from "../theme";
 import { usePurchase, PLANS, TRIAL_DAYS } from "../context/PurchaseContext";
 
@@ -100,8 +100,33 @@ export default function Onboarding() {
   const [step, setStep] = useState(0);
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
-  const slide = SLIDES[step];
-  const isLast = step === SLIDES.length - 1;
+  // Replaying the guide from Settings is not the same as signing up. Someone
+  // re-reading it already has an account, has already chosen a plan, and may
+  // already have a PIN (which Settings can change on its own). Sending them to
+  // PIN setup at the end — as every exit here used to — is both confusing and
+  // pointless, so a replay simply returns to where it was opened from and the
+  // pricing pitch is left out entirely.
+  const { replay } = useLocalSearchParams();
+  const isReplay = replay === "1" || replay === "true";
+
+  const slides = useMemo(
+    () => (isReplay ? SLIDES.filter((sl) => sl.key !== "pricing") : SLIDES),
+    [isReplay]
+  );
+
+  const slide = slides[step];
+  const isLast = step === slides.length - 1;
+
+  // Where the guide sends you when it's finished.
+  const finish = useCallback(() => {
+    if (isReplay) {
+      if (router.canGoBack()) router.back();
+      else router.replace("/settings");
+      return;
+    }
+    // First run: PIN setup is the final step of signing up.
+    router.replace("/pin-setup");
+  }, [isReplay, router]);
 
   const goTo = (nextStep) => {
     Animated.sequence([
@@ -114,7 +139,7 @@ export default function Onboarding() {
   const handleCta = async () => {
     if (isLast) {
       // "Start free trial" — trial begins automatically, just proceed
-      router.replace("/pin-setup");
+      finish();
     } else {
       goTo(step + 1);
     }
@@ -122,13 +147,13 @@ export default function Onboarding() {
 
   const handleSkip = async () => {
     await continueForFree();
-    router.replace("/pin-setup");
+    finish();
   };
 
   const handleSubscribe = async (planKey) => {
     const res = await purchase(planKey);
     if (res?.ok) {
-      router.replace("/pin-setup");
+      finish();
       return;
     }
     // Payments aren't live yet — say so plainly, and offer the trial, which
@@ -138,7 +163,7 @@ export default function Onboarding() {
       res?.error || "Something went wrong. Please try again.",
       [
         { text: "Back", style: "cancel" },
-        { text: `Start ${TRIAL_DAYS}-day free trial`, onPress: () => router.replace("/pin-setup") },
+        { text: `Start ${TRIAL_DAYS}-day free trial`, onPress: finish },
       ]
     );
   };
@@ -147,7 +172,7 @@ export default function Onboarding() {
     <SafeAreaView style={[s.safe, { backgroundColor: colors.bg }]}>
 
       {/* Skip button top-right (not on last two steps) */}
-      {step < SLIDES.length - 1 && (
+      {step < slides.length - 1 && (
         <TouchableOpacity style={s.skipBtn} onPress={handleSkip} activeOpacity={0.7}>
           <Text style={[s.skipText, { color: colors.textMuted }]}>Skip</Text>
         </TouchableOpacity>
@@ -166,7 +191,7 @@ export default function Onboarding() {
           </View>
 
           {/* Step dots */}
-          <StepDots count={SLIDES.length} current={step} colors={colors} />
+          <StepDots count={slides.length} current={step} colors={colors} />
 
           {/* Text */}
           <Text style={[s.title, { color: colors.textPrimary }]}>{slide.title}</Text>
@@ -316,6 +341,20 @@ export default function Onboarding() {
 
         </Animated.View>
       </ScrollView>
+
+      {/* Back on the pricing slide too — it has its own inline buttons, so it
+          was the one slide with no way to return and re-read the previous one. */}
+      {slide.key === "pricing" && step > 0 && (
+        <View style={[s.footer, { borderTopColor: colors.border, paddingTop: spacing.sm }]}>
+          <TouchableOpacity
+            style={[s.backBtn, { borderColor: colors.border, alignSelf: "flex-start" }]}
+            onPress={() => goTo(step - 1)}
+            activeOpacity={0.7}
+          >
+            <Text style={[s.backBtnText, { color: colors.textSecondary }]}>← Back</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* ── Bottom actions — hidden on pricing slide (it has inline buttons) ── */}
       {slide.key !== "pricing" && (

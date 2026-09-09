@@ -32,10 +32,13 @@ function isHistoricalTx(t, bankConnectedAt) {
 
 // ── Status pill ───────────────────────────────────────────────────────────────
 
-function StatusPill({ historical, isIncome, isSpend, allocated, colors }) {
+function StatusPill({ historical, isIncome, isSpend, allocated, isTransfer, colors }) {
   let bg, border, textColor, label;
 
-  if (isIncome) {
+  if (isTransfer) {
+    // Money moved between the user's own accounts — not spending, not income.
+    bg = colors.accentSoft; border = colors.accent; textColor = colors.accent; label = "Transfer";
+  } else if (isIncome) {
     bg = colors.successBg; border = colors.success; textColor = colors.success; label = "Income";
   } else if (historical) {
     // Spending from before the bank was connected — history, not a to-do.
@@ -57,9 +60,16 @@ function StatusPill({ historical, isIncome, isSpend, allocated, colors }) {
 
 // ── Transaction card ──────────────────────────────────────────────────────────
 
-function TxCard({ t, onAllocate, envelopes, colors, bankConnectedAt }) {
-  const isIncome = t.kind === "income";
-  const isSpend  = t.kind === "spend";
+function TxCard({
+  t, onAllocate, envelopes, colors, bankConnectedAt,
+  selectMode, isSelected, onToggleSelect, onEnterSelect,
+}) {
+  // A transfer between the user's own accounts. Only the outgoing leg is shown
+  // — the matching incoming leg is filtered out of the list, so the same $20
+  // isn't presented twice.
+  const isTransfer = !!t.transfer || t.kind === "transfer";
+  const isIncome = !isTransfer && t.kind === "income";
+  const isSpend  = !isTransfer && t.kind === "spend";
 
   // "Imported" is only for spending that predates the bank connection. Anything
   // that happened after you connected is live spending waiting to be allocated.
@@ -74,18 +84,55 @@ function TxCard({ t, onAllocate, envelopes, colors, bankConnectedAt }) {
   const remaining  = Math.max(0, Number(((Math.abs(t.amount) || 0) - already).toFixed(2)));
   const isAllocated = !!t.allocated;
 
-  const title = t.merchant || t.description || (isIncome ? "Income" : "Transaction");
+  const title = isTransfer
+    ? `Moved to your other account`
+    : t.merchant || t.description || (isIncome ? "Income" : "Transaction");
 
   const date = t.postedAt || t.createdAt;
   const dateStr = date
     ? new Date(date).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })
     : "";
 
+  // Only unsorted, non-historical spending can be bulk-selected. Income,
+  // transfers and already-sorted rows have nothing to allocate.
+  const selectable = isSpend && !isAllocated && !isHistorical;
+
+  const Wrapper = selectMode || selectable ? TouchableOpacity : View;
+  const wrapperProps = selectMode
+    ? { activeOpacity: 0.7, onPress: () => selectable && onToggleSelect?.(t.id) }
+    : selectable
+      ? { activeOpacity: 1, onLongPress: () => onEnterSelect?.(t.id), delayLongPress: 300 }
+      : {};
+
   return (
-    <View style={[txcard.wrap, { backgroundColor: colors.card, borderColor: colors.border }]}>
+    <Wrapper
+      {...wrapperProps}
+      style={[
+        txcard.wrap,
+        {
+          backgroundColor: colors.card,
+          borderColor: selectMode && isSelected ? colors.accent : colors.border,
+          borderWidth:  selectMode && isSelected ? 2 : 1,
+          opacity: selectMode && !selectable ? 0.45 : 1,
+        },
+      ]}
+    >
 
       {/* Top row: merchant + amount */}
       <View style={txcard.topRow}>
+        {selectMode && (
+          <View
+            style={{
+              width: 22, height: 22, borderRadius: 6, marginRight: spacing.md, marginTop: 2,
+              borderWidth: 2,
+              borderColor: isSelected ? colors.accent : colors.border,
+              backgroundColor: isSelected ? colors.accent : "transparent",
+              alignItems: "center", justifyContent: "center",
+            }}
+          >
+            {isSelected && <Text style={{ color: "#fff", fontSize: 13, fontWeight: "700" }}>✓</Text>}
+          </View>
+        )}
         <View style={{ flex: 1 }}>
           <Text style={[txcard.merchant, { color: colors.textPrimary }]} numberOfLines={2}>
             {title}
@@ -101,6 +148,7 @@ function TxCard({ t, onAllocate, envelopes, colors, bankConnectedAt }) {
       <View style={txcard.midRow}>
         <StatusPill
           historical={isHistorical}
+          isTransfer={isTransfer}
           isIncome={isIncome}
           isSpend={isSpend}
           allocated={isAllocated}
@@ -132,8 +180,26 @@ function TxCard({ t, onAllocate, envelopes, colors, bankConnectedAt }) {
         </View>
       )}
 
+      {/* A transfer isn't spending, so it is never drawn OUT of an envelope.
+          Moving money to savings is a decision to set it aside — in envelope
+          terms that means putting it IN. */}
+      {isTransfer && !selectMode && !isAllocated && (
+        <>
+          <Text style={[txcard.remaining, { color: colors.textMuted, marginTop: spacing.xs }]}>
+            Between your own accounts — your total hasn't changed.
+          </Text>
+          <TouchableOpacity
+            style={[txcard.allocBtn, { backgroundColor: colors.accent }]}
+            onPress={() => onAllocate(t)}
+            activeOpacity={0.8}
+          >
+            <Text style={txcard.allocBtnText}>Put into an envelope →</Text>
+          </TouchableOpacity>
+        </>
+      )}
+
       {/* Allocate button for outstanding spends — including ones from the bank */}
-      {isSpend && !isHistorical && !isAllocated && (
+      {isSpend && !isHistorical && !isAllocated && !selectMode && (
         <TouchableOpacity
           style={[txcard.allocBtn, { backgroundColor: colors.accent }]}
           onPress={() => onAllocate(t)}
@@ -142,14 +208,25 @@ function TxCard({ t, onAllocate, envelopes, colors, bankConnectedAt }) {
           <Text style={txcard.allocBtnText}>Allocate to envelope →</Text>
         </TouchableOpacity>
       )}
-    </View>
+
+      {/* Long-press is invisible on its own, so say it once, on the first
+          sortable row, when there is more than one thing to sort. */}
+      {selectable && !selectMode && (
+        <Text style={[txcard.date, { color: colors.textMuted, marginTop: spacing.xs }]}>
+          Hold to select several
+        </Text>
+      )}
+    </Wrapper>
   );
 }
 
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export default function TransactionsScreen() {
-  const { state, allocateOutstanding, unallocated, importBankTransactions, bankConnectedAt } = useBudget();
+  const {
+    state, allocateOutstanding, allocateMany, fundEnvelopeFromTransfer,
+    unallocated, importBankTransactions, bankConnectedAt,
+  } = useBudget();
   const { hasBankAccess } = usePurchase();
   const { colors } = useTheme();
   const s = makeStyles(colors);
@@ -159,7 +236,11 @@ export default function TransactionsScreen() {
   const [filter, setFilter]             = useState("all"); // all | income | spend | outstanding
 
   const txs = useMemo(() => {
-    const list = Array.isArray(state.transactions) ? [...state.transactions] : [];
+    // Hide the incoming half of a matched transfer — both legs describe the
+    // same movement, and showing them separately implies money was both spent
+    // and earned when neither happened.
+    const list = (Array.isArray(state.transactions) ? state.transactions : [])
+      .filter(t => !(t.transfer && t.transferRole === "in"));
     list.sort((a, b) => {
       const at = new Date(a.postedAt || a.createdAt || 0).getTime();
       const bt = new Date(b.postedAt || b.createdAt || 0).getTime();
@@ -189,14 +270,81 @@ export default function TransactionsScreen() {
     [state.transactions, bankConnectedAt]
   );
 
+  // ── Bulk selection ─────────────────────────────────────────────────────────
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected]     = useState(() => new Set());
+
+  const outstandingIds = useMemo(
+    () => state.transactions
+      .filter(t => t.kind === "spend" && !t.allocated && !isHistoricalTx(t, bankConnectedAt))
+      .map(t => String(t.id)),
+    [state.transactions, bankConnectedAt]
+  );
+
+  const exitSelect = useCallback(() => {
+    setSelectMode(false);
+    setSelected(new Set());
+  }, []);
+
+  const toggleSelect = useCallback((id) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      next.has(String(id)) ? next.delete(String(id)) : next.add(String(id));
+      return next;
+    });
+  }, []);
+
+  const enterSelect = useCallback((id) => {
+    setSelectMode(true);
+    setSelected(new Set(id ? [String(id)] : []));
+  }, []);
+
+  // From the banner: start with everything that needs sorting already ticked,
+  // since "sort them all into one envelope" is the common case.
+  const selectAllOutstanding = useCallback(() => {
+    setSelectMode(true);
+    setSelected(new Set(outstandingIds));
+  }, [outstandingIds]);
+
+  const selectedTotal = useMemo(() => {
+    let sum = 0;
+    for (const t of state.transactions) {
+      if (!selected.has(String(t.id))) continue;
+      const used = (t.allocations || []).reduce((s, a) => s + (a.used || 0), 0);
+      sum += Math.max(0, Math.abs(Number(t.amount) || 0) - used);
+    }
+    return Math.round(sum * 100) / 100;
+  }, [selected, state.transactions]);
+
   const openChooser  = useCallback(tx => setChooserForTx(tx), []);
   const closeChooser = useCallback(() => setChooserForTx(null), []);
 
   const pickSource = useCallback(sourceId => {
+    // In selection mode the chooser applies to the whole selection.
+    if (selectMode && selected.size > 0) {
+      const res = allocateMany([...selected], sourceId);
+      closeChooser();
+      exitSelect();
+      if (res?.message) Alert.alert(res.ok ? "Allocated" : "Nothing allocated", res.message);
+      return;
+    }
     if (!chooserForTx) return;
+
+    // A transfer funds an envelope; a spend draws one down. Same gesture,
+    // opposite direction — getting this backwards would take money out of an
+    // envelope for cash the user never actually spent.
+    const isTransfer = !!chooserForTx.transfer || chooserForTx.kind === "transfer";
+    if (isTransfer) {
+      if (sourceId === "unallocated") { closeChooser(); return; } // already unallocated
+      const res = fundEnvelopeFromTransfer(chooserForTx.id, sourceId);
+      closeChooser();
+      if (res?.message) Alert.alert(res.ok ? "Set aside" : "Couldn't do that", res.message);
+      return;
+    }
+
     allocateOutstanding(chooserForTx.id, sourceId);
     closeChooser();
-  }, [chooserForTx, allocateOutstanding, closeChooser]);
+  }, [selectMode, selected, allocateMany, allocateOutstanding, fundEnvelopeFromTransfer, chooserForTx, closeChooser, exitSelect]);
 
   const handleImport = async () => {
     setImporting(true);
@@ -216,18 +364,54 @@ export default function TransactionsScreen() {
       envelopes={state.envelopes}
       colors={colors}
       bankConnectedAt={bankConnectedAt}
+      selectMode={selectMode}
+      isSelected={selected.has(String(t.id))}
+      onToggleSelect={toggleSelect}
+      onEnterSelect={enterSelect}
     />
-  ), [openChooser, state.envelopes, colors, bankConnectedAt]);
+  ), [openChooser, state.envelopes, colors, bankConnectedAt, selectMode, selected, toggleSelect, enterSelect]);
 
   return (
     <SafeAreaView style={s.screen}>
 
-      {/* ── Outstanding banner ── */}
-      {outstandingCount > 0 && (
-        <View style={[banner.wrap, { backgroundColor: colors.warningBg, borderBottomColor: colors.warning }]}>
-          <Text style={[banner.text, { color: colors.warning }]}>
+      {/* ── Outstanding banner ──
+          Doubles as the way into bulk selection. It already appears exactly when
+          there is something to sort, which makes it a far better entry point
+          than a hidden long-press. */}
+      {outstandingCount > 0 && !selectMode && (
+        <TouchableOpacity
+          style={[banner.wrap, { backgroundColor: colors.warningBg, borderBottomColor: colors.warning, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }]}
+          onPress={outstandingCount > 1 ? selectAllOutstanding : undefined}
+          activeOpacity={outstandingCount > 1 ? 0.7 : 1}
+        >
+          <Text style={[banner.text, { color: colors.warning, flex: 1 }]}>
             ⚠️  {outstandingCount} spend{outstandingCount > 1 ? "s" : ""} need allocating
           </Text>
+          {outstandingCount > 1 && (
+            <Text style={[banner.text, { color: colors.warning, fontWeight: typography.bold, textDecorationLine: "underline" }]}>
+              Sort all
+            </Text>
+          )}
+        </TouchableOpacity>
+      )}
+
+      {/* ── Selection header ── */}
+      {selectMode && (
+        <View style={[banner.wrap, { backgroundColor: colors.accentSoft, borderBottomColor: colors.accent, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }]}>
+          <TouchableOpacity onPress={exitSelect} activeOpacity={0.7}>
+            <Text style={[banner.text, { color: colors.accent, fontWeight: typography.bold }]}>Cancel</Text>
+          </TouchableOpacity>
+          <Text style={[banner.text, { color: colors.accent }]}>
+            {selected.size} selected
+          </Text>
+          <TouchableOpacity
+            onPress={() => setSelected(new Set(selected.size === outstandingIds.length ? [] : outstandingIds))}
+            activeOpacity={0.7}
+          >
+            <Text style={[banner.text, { color: colors.accent, fontWeight: typography.bold }]}>
+              {selected.size === outstandingIds.length ? "None" : "All"}
+            </Text>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -286,6 +470,27 @@ export default function TransactionsScreen() {
         removeClippedSubviews
       />
 
+      {/* ── Bulk action bar ── */}
+      {selectMode && (
+        <View style={[bulk.bar, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
+          <TouchableOpacity
+            style={[bulk.btn, {
+              backgroundColor: selected.size ? colors.accent : colors.cardAlt,
+              borderColor: selected.size ? colors.accent : colors.border,
+            }]}
+            onPress={() => selected.size && setChooserForTx({ bulk: true })}
+            activeOpacity={selected.size ? 0.85 : 1}
+            disabled={!selected.size}
+          >
+            <Text style={[bulk.btnText, { color: selected.size ? "#FFFFFF" : colors.textMuted }]}>
+              {selected.size
+                ? `Allocate ${selected.size} — $${fmt(selectedTotal)}`
+                : "Select transactions to allocate"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* ── Source chooser modal ── */}
       <Modal visible={!!chooserForTx} transparent animationType="slide">
         <View style={[chooser.backdrop, { backgroundColor: colors.overlay }]}>
@@ -294,15 +499,25 @@ export default function TransactionsScreen() {
             <View style={[chooser.handle, { backgroundColor: colors.border }]} />
 
             <Text style={[chooser.title, { color: colors.textPrimary }]}>
-              Allocate to envelope
+              {chooserForTx?.bulk
+                ? `Allocate ${selected.size} transaction${selected.size !== 1 ? "s" : ""}`
+                : chooserForTx?.transfer || chooserForTx?.kind === "transfer"
+                  ? "Put into an envelope"
+                  : "Allocate to envelope"}
             </Text>
-            {chooserForTx && (
+            {chooserForTx?.bulk ? (
+              <View style={[chooser.chip, { backgroundColor: colors.accentSoft }]}>
+                <Text style={[chooser.chipText, { color: colors.accent }]}>
+                  {selected.size} selected — ${fmt(selectedTotal)}
+                </Text>
+              </View>
+            ) : chooserForTx ? (
               <View style={[chooser.chip, { backgroundColor: colors.dangerBg }]}>
                 <Text style={[chooser.chipText, { color: colors.danger }]}>
                   {chooserForTx.merchant || "Spend"} — ${fmt(Math.abs(chooserForTx.amount))}
                 </Text>
               </View>
-            )}
+            ) : null}
 
             <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
 
@@ -572,6 +787,25 @@ const chooser = StyleSheet.create({
     borderWidth: 1,
   },
   cancelText: {
+    fontSize: typography.md,
+    fontWeight: typography.bold,
+  },
+});
+// Bulk action bar — sits above the tab bar while selecting.
+const bulk = StyleSheet.create({
+  bar: {
+    borderTopWidth: 1,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.md,
+  },
+  btn: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    paddingVertical: 15,
+    alignItems: "center",
+  },
+  btnText: {
     fontSize: typography.md,
     fontWeight: typography.bold,
   },

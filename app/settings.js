@@ -318,7 +318,9 @@ export default function Settings() {
           <ChevronRow
             label="How Tend works"
             subtitle="Replay the guide"
-            onPress={() => router.push("/onboarding")}
+            // replay=1 — skips the pricing pitch and returns here at the end,
+            // rather than marching an existing user through PIN setup again.
+            onPress={() => router.push("/onboarding?replay=1")}
             colors={colors}
           />
           <ChevronRow
