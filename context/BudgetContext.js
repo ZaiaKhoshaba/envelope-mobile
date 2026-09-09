@@ -397,7 +397,58 @@ function normalizeTx(t) {
     postedAt:    t.postedAt || t.date || new Date().toISOString(),
     allocations: Array.isArray(t.allocations) ? t.allocations : [],
     allocated:   !!t.allocated,
+    accountId:   t.accountId != null ? String(t.accountId) : null,
+    bankType:    t.type || null,
   };
+}
+
+/**
+ * Find money moved between the customer's OWN connected accounts.
+ *
+ * When two accounts are both connected, one move produces two rows: -$20 in
+ * the account it left and +$20 in the one it arrived in. Neither is spending
+ * and neither is income — the customer has exactly as much money as before,
+ * which is why the total on the home screen correctly does not change.
+ *
+ * Left alone, that pair does real damage: the negative leg asks to be drawn
+ * out of an envelope for money that was never spent, and the positive leg
+ * inflates income. So the two legs are paired, marked, and later shown as a
+ * single row whose action is to PUT money into an envelope rather than take it
+ * out — which is what moving money to savings actually means in envelope terms.
+ *
+ * Matched on: equal amounts, opposite signs, different accounts, within 3 days
+ * (banks can post the two sides on different days). Each leg is used once, so a
+ * genuine $20 refund can't be mistaken for the other half of a transfer.
+ */
+function markInternalTransfers(txs) {
+  const byId = new Map(txs.map((t) => [t.id, { ...t }]));
+  const WINDOW_MS = 3 * 86400000;
+  const ms = (t) => Date.parse(t.postedAt || t.createdAt || "") || 0;
+
+  const outs = txs.filter((t) => Number(t.amount) < 0 && t.accountId);
+  const ins  = txs.filter((t) => Number(t.amount) > 0 && t.accountId);
+  const claimed = new Set();
+
+  for (const out of outs) {
+    const target = Math.abs(Number(out.amount));
+    const match = ins.find((i) =>
+      !claimed.has(i.id) &&
+      i.accountId !== out.accountId &&
+      Math.abs(Math.abs(Number(i.amount)) - target) < 0.005 &&
+      Math.abs(ms(i) - ms(out)) <= WINDOW_MS
+    );
+    if (!match) continue;
+
+    claimed.add(match.id);
+    claimed.add(out.id);
+    const o = byId.get(out.id), m = byId.get(match.id);
+    // The outgoing leg is the one the customer acts on; the incoming leg is
+    // hidden so the same $20 isn't presented twice.
+    Object.assign(o, { transfer: true, transferRole: "out", transferPairId: match.id, kind: "transfer" });
+    Object.assign(m, { transfer: true, transferRole: "in",  transferPairId: out.id,   kind: "transfer" });
+  }
+
+  return txs.map((t) => byId.get(t.id));
 }
 
 /* -----------------------------------------------------------
@@ -666,8 +717,90 @@ export function BudgetProvider({ children }) {
         envelopes: envelopesCopy,
         transactions: transactionsCopy,
       });
+
+      // Learn the merchant. Sorting from the ledger previously taught Tend
+      // nothing — only the notification flow created rules — so the same shops
+      // had to be sorted by hand every week. "unallocated" is not a real
+      // envelope, so there is nothing to learn from it.
+      if (sourceId !== "unallocated") {
+        const key = ruleKeyFromMerchant(txCopy.merchant);
+        if (key && key.length >= 3 && !findRuleMatch(state.rules, txCopy.merchant)) {
+          dispatch({ type: "ADD_RULE", rule: { id: newId("rule"), match: key, envelopeId: sourceId } });
+        }
+      }
     },
-    [state.envelopes, state.transactions]
+    [state.envelopes, state.transactions, state.rules]
+  );
+
+  /**
+   * Allocate several transactions to one envelope in a single pass.
+   *
+   * Doing this one at a time meant a week of spending was a week of taps, which
+   * is the main reason unsorted transactions pile up. Applied as one state
+   * update so envelope balances can't be corrupted by a half-finished run.
+   */
+  const allocateMany = useCallback(
+    (txIds, sourceId) => {
+      const ids = [...new Set((txIds || []).map(String))];
+      if (!ids.length || !sourceId) return { ok: false, allocated: 0, message: "Nothing selected." };
+
+      const envelopesCopy = state.envelopes.map((e) => ({ ...e }));
+      const env = sourceId === "unallocated" ? null : envelopesCopy.find((e) => e.id === sourceId);
+      if (sourceId !== "unallocated" && !env) {
+        return { ok: false, allocated: 0, message: "That envelope no longer exists." };
+      }
+
+      let allocated = 0, total = 0, skipped = 0;
+      const transactionsCopy = state.transactions.map((t) => {
+        if (!ids.includes(String(t.id))) return t;
+        if (t.kind !== "spend" || t.allocated) { skipped++; return t; }
+
+        const amountAbs = Math.abs(Number(t.amount) || 0);
+        const used      = (t.allocations || []).reduce((s, a) => s + (a.used || 0), 0);
+        const remaining = round2(amountAbs - used);
+        if (remaining <= 0) { skipped++; return t; }
+
+        // Stop at the envelope's balance rather than letting it go negative —
+        // silently overdrawing an envelope is worse than leaving one unsorted.
+        if (env && Number(env.amount) < remaining) { skipped++; return t; }
+        if (env) env.amount = round2(Number(env.amount) - remaining);
+
+        allocated++; total = round2(total + remaining);
+        return {
+          ...t,
+          allocations: [...(t.allocations || []), { sourceId, used: remaining }],
+          allocated: true,
+        };
+      });
+
+      if (!allocated) {
+        return { ok: false, allocated: 0, skipped, message: env
+          ? `Not enough left in ${env.name} to cover those.`
+          : "Nothing to allocate." };
+      }
+
+      dispatch({ type: "ALLOCATE", envelopes: envelopesCopy, transactions: transactionsCopy });
+
+      // Learn each distinct merchant from a bulk sort too.
+      if (sourceId !== "unallocated") {
+        const learned = new Set();
+        for (const t of transactionsCopy) {
+          if (!ids.includes(String(t.id)) || !t.allocated) continue;
+          const key = ruleKeyFromMerchant(t.merchant);
+          if (key && key.length >= 3 && !learned.has(key) && !findRuleMatch(state.rules, t.merchant)) {
+            learned.add(key);
+            dispatch({ type: "ADD_RULE", rule: { id: newId("rule"), match: key, envelopeId: sourceId } });
+          }
+        }
+      }
+
+      return {
+        ok: true, allocated, skipped, total,
+        message: `Allocated ${allocated} transaction${allocated !== 1 ? "s" : ""} — $${fmt(total)}` +
+                 (skipped ? ` (${skipped} skipped)` : ""),
+      };
+    },
+    [state.envelopes, state.transactions, state.rules]
   );
 
   const allocateToEnvelope = useCallback(
@@ -1028,8 +1161,9 @@ export function BudgetProvider({ children }) {
         };
       });
 
-      // Merge + sort newest first
-      const merged = [...processed, ...existing];
+      // Pair up moves between the customer's own accounts before merging, so
+      // neither leg is ever offered as a spend to draw from an envelope.
+      const merged = markInternalTransfers([...processed, ...existing]);
       merged.sort((a, b) => {
         const ad = new Date(a.postedAt || a.createdAt || 0).getTime();
         const bd = new Date(b.postedAt || b.createdAt || 0).getTime();
@@ -1105,6 +1239,7 @@ export function BudgetProvider({ children }) {
       addSpend,
       allocateToEnvelope,
       allocateOutstanding,
+      allocateMany,
       deleteEnvelope,
       reorderEnvelopes,
       editEnvelope,
@@ -1147,6 +1282,7 @@ export function BudgetProvider({ children }) {
       addSpend,
       allocateToEnvelope,
       allocateOutstanding,
+      allocateMany,
       deleteEnvelope,
       reorderEnvelopes,
       editEnvelope,
