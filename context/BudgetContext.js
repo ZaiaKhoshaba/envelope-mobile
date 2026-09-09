@@ -405,15 +405,19 @@ function normalizeTx(t) {
 ----------------------------------------------------------- */
 export function BudgetProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, defaultState);
-  const { user, token } = useAuth();
+  const { user, token, handleAuthExpired } = useAuth();
 
   const tokenRef     = useRef(token);
+  // Held in a ref so the fetch helpers can call it without being recreated on
+  // every auth change (which would retrigger every effect that depends on them).
+  const authExpiredRef = useRef(null);
   const hydratingRef = useRef(false);
   const stampRef     = useRef(null);   // ISO stamp of the latest local change
   const localTimer   = useRef(null);
   const remoteTimer  = useRef(null);
 
   useEffect(() => { tokenRef.current = token; }, [token]);
+  useEffect(() => { authExpiredRef.current = handleAuthExpired; }, [handleAuthExpired]);
 
   /* -----------------------------------------------------------
      CLOUD SYNC — push (debounced)
@@ -558,11 +562,15 @@ export function BudgetProvider({ children }) {
       const r = await fetch(`${BACKEND_URL}/fiskil/balance`, {
         headers: { Authorization: `Bearer ${t}` },
       });
+      // A rejected token used to be swallowed here, so an expired login left the
+      // app showing a stale balance indefinitely with no error — refreshing
+      // appeared to work and changed nothing. Surface it instead.
+      if (r.status === 401) { await authExpiredRef.current?.(); return; }
       if (r.ok) {
         const j = await r.json();
         if (typeof j.balance === "number") setBankBalance(j.balance, j.accountCount, j.asOf);
       }
-    } catch { /* keep last known balance */ }
+    } catch { /* offline — keep last known balance */ }
   }, [setBankBalance]);
 
   // Fully disconnect all linked banks: revoke every consent at Fiskil, then drop
@@ -934,6 +942,12 @@ export function BudgetProvider({ children }) {
               headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
               body:    JSON.stringify({ limit: 100 }),
             });
+            // Same expired-token trap as the balance fetch: silently importing
+            // nothing looked identical to "no new transactions".
+            if (r.status === 401) {
+              await authExpiredRef.current?.();
+              return { ok: false, imported: 0, message: "Your session expired — please sign in again." };
+            }
             const j = await r.json().catch(() => ({}));
             if (r.ok && Array.isArray(j.txs)) {
               importedTxs = j.txs.map(normalizeTx);

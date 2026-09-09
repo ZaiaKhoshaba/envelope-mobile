@@ -257,6 +257,21 @@ export function AuthProvider({ children }) {
     await clearStoredSession();
   }, [clearStoredSession]);
 
+  // Called when the server rejects our token (401). Login tokens expire, and
+  // every caller previously ignored the rejection, so the app carried on
+  // showing whatever bank figures it had last managed to fetch — for days,
+  // with no error. Silent staleness is the worst failure mode for a banking
+  // app: the number looks authoritative and is simply wrong.
+  //
+  // Ending the session sends the user to the login screen with an explanation,
+  // which restores a working token and, importantly, tells them something
+  // happened rather than quietly lying to them.
+  const handleAuthExpired = useCallback(async () => {
+    if (!tokenRef.current) return;   // already signed out — nothing to do
+    await clearStoredSession();
+    setError("Your session expired. Please sign in again to keep your bank up to date.");
+  }, [clearStoredSession, setError]);
+
   // Permanently delete the account and everything stored for it. The server
   // revokes any bank consents first, then removes the user's records; we only
   // clear the local session once that has actually succeeded.
@@ -313,6 +328,7 @@ export function AuthProvider({ children }) {
     register,
     login,
     logout,
+    handleAuthExpired,
     deleteAccount,
     enablePin,
     disablePin,
