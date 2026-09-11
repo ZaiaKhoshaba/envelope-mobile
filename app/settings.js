@@ -2,7 +2,7 @@
 // Settings is for things you change. Who you are lives on the Profile screen
 // (the avatar on Home); testing tools are limited to accounts in TEST_ACCOUNTS.
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import {
   View,
   Text,
@@ -18,6 +18,7 @@ import { useRouter } from "expo-router";
 import { useBudget } from "../context/BudgetContext";
 import { useAuth } from "../context/AuthContext";
 import { usePurchase, PLANS } from "../context/PurchaseContext";
+import { getUnlockMethod, setUnlockMethod } from "../lib/unlockPref";
 import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
 
 const DEV_UNLOCK_TAPS = 5;
@@ -126,6 +127,10 @@ export default function Settings() {
   const { colors, isDark, toggle } = useTheme();
   const { resetAll, bankBalance, bankAccountCount, lastBalanceSync } = useBudget();
   const { logout, deleteAccount, pinEnabled, disablePin } = useAuth();
+
+  // The remembered unlock choice (asked once on the lock screen).
+  const [unlockMethod, setUnlockMethodLocal] = useState(null);
+  useEffect(() => { getUnlockMethod().then(setUnlockMethodLocal); }, []);
   const {
     isSubscribed, isFreeUser, trialExpired, daysRemaining,
     restorePurchases, isTester, setTestSubscription,
@@ -302,6 +307,25 @@ export default function Settings() {
                 ]);
               }}
               right={<Text style={{ color: colors.danger, fontSize: 18 }}>›</Text>}
+            />
+          )}
+          {pinEnabled && (
+            <SettingRow
+              label="Unlock with"
+              subtitle={unlockMethod === "biometric"
+                ? "Fingerprint / Face ID — tap to use your PIN instead"
+                : "PIN — tap to use fingerprint / Face ID instead"}
+              colors={colors}
+              onPress={async () => {
+                const next = unlockMethod === "biometric" ? "pin" : "biometric";
+                await setUnlockMethod(next);
+                setUnlockMethodLocal(next);
+              }}
+              right={
+                <Text style={{ color: colors.accent, fontSize: 14, fontWeight: "600" }}>
+                  {unlockMethod === "biometric" ? "Fingerprint" : "PIN"}
+                </Text>
+              }
             />
           )}
           <ChevronRow

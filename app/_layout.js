@@ -25,6 +25,7 @@ import { usePushNotifications } from "../lib/notifications";
 import { useIdleReminder } from "../lib/idleNotifications";
 import PinPad from "../components/PinPad";
 import { fmt } from "../lib/format";
+import { getUnlockMethod, setUnlockMethod } from "../lib/unlockPref";
 
 // ── Spend Chooser Modal ───────────────────────────────────────────────────────
 
@@ -131,6 +132,8 @@ function PinLockModal() {
   const [current,     setCurrent]     = useState("");
   const [errMsg,      setErrMsg]      = useState("");
   const [bioAvailable, setBioAvailable] = useState(false);
+  // null = never asked, so show the one-time choice. Otherwise honour it.
+  const [unlockMethod, setUnlockMethodState] = useState(undefined);
   const shakeAnim = useRef(new Animated.Value(0)).current;
 
   // ── Biometric unlock (Face ID / fingerprint) ────────────────────────────────
@@ -156,20 +159,31 @@ function PinLockModal() {
     let cancelled = false;
     (async () => {
       try {
-        const [hasHardware, enrolled] = await Promise.all([
+        const [hasHardware, enrolled, saved] = await Promise.all([
           LocalAuthentication.hasHardwareAsync(),
           LocalAuthentication.isEnrolledAsync(),
+          getUnlockMethod(),
         ]);
         if (cancelled) return;
         const available = hasHardware && enrolled;
         setBioAvailable(available);
-        if (available) tryBiometrics(); // prompt immediately on lock
+        setUnlockMethodState(saved);
+        // Prompt automatically ONLY for someone who chose fingerprint. It used
+        // to fire on every unlock regardless, so PIN users had to dismiss a
+        // fingerprint dialog every time they opened the app.
+        if (available && saved === "biometric") tryBiometrics();
       } catch {
         if (!cancelled) setBioAvailable(false);
       }
     })();
     return () => { cancelled = true; };
   }, [isLocked, tryBiometrics]);
+
+  const chooseUnlock = useCallback(async (method) => {
+    await setUnlockMethod(method);
+    setUnlockMethodState(method);
+    if (method === "biometric") tryBiometrics();
+  }, [tryBiometrics]);
 
   const shake = () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -248,9 +262,37 @@ function PinLockModal() {
             <Text style={[lock.errText, { color: colors.danger }]}>{errMsg}</Text>
           )}
 
+          {/* Asked once, inline — never as a pop-up over the lock screen. */}
+          {bioAvailable && unlockMethod === null && (
+            <View style={{ alignSelf: "stretch", marginBottom: spacing.md, padding: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.cardAlt }}>
+              <Text style={{ color: colors.textPrimary, fontSize: typography.sm, fontWeight: typography.semibold, textAlign: "center", marginBottom: spacing.sm }}>
+                How would you like to unlock Tend?
+              </Text>
+              <View style={{ flexDirection: "row", gap: spacing.sm }}>
+                <TouchableOpacity
+                  style={{ flex: 1, paddingVertical: spacing.sm, borderRadius: radius.sm, backgroundColor: colors.accent, alignItems: "center" }}
+                  onPress={() => chooseUnlock("biometric")}
+                  activeOpacity={0.8}
+                >
+                  <Text style={{ color: "#FFFFFF", fontWeight: typography.bold, fontSize: typography.sm }}>Fingerprint</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{ flex: 1, paddingVertical: spacing.sm, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, alignItems: "center" }}
+                  onPress={() => chooseUnlock("pin")}
+                  activeOpacity={0.8}
+                >
+                  <Text style={{ color: colors.textPrimary, fontWeight: typography.bold, fontSize: typography.sm }}>PIN</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={{ color: colors.textMuted, fontSize: typography.xs, textAlign: "center", marginTop: spacing.sm }}>
+                You can change this any time in Settings.
+              </Text>
+            </View>
+          )}
+
           <PinPad onKey={handleKey} colors={colors} />
 
-          {bioAvailable && (
+          {bioAvailable && unlockMethod !== null && (
             <TouchableOpacity
               style={[lock.bioBtn, { borderColor: colors.accent }]}
               onPress={tryBiometrics}

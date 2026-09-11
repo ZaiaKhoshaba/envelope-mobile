@@ -399,7 +399,43 @@ function normalizeTx(t) {
     allocated:   !!t.allocated,
     accountId:   t.accountId != null ? String(t.accountId) : null,
     bankType:    t.type || null,
+    executedAt:  t.executedAt || null,   // real time of the transaction, when the bank gives one
   };
+}
+
+/**
+ * Was this transaction already accounted for in the balance the user divided
+ * into envelopes?
+ *
+ * The balance at the moment of connecting is the starting line. Everything
+ * spent before it has ALREADY come out of that balance, so allocating it to an
+ * envelope would take the same money out twice — it lands in Unallocated and
+ * has to be put straight back. Everything spent after it is new, and needs
+ * allocating.
+ *
+ * Precise when the bank supplies a real time. When it only supplies a date, a
+ * transaction dated the connection day genuinely can't be placed either side
+ * of the line — and it's counted as already accounted for, because the user
+ * divided up the balance they could see, and a day-old purchase was in it.
+ */
+function isBeforeConnection(tx, connectedAt) {
+  if (!connectedAt) return false;
+  const connectedMs = Date.parse(connectedAt);
+  if (!Number.isFinite(connectedMs)) return false;
+
+  const execMs = tx.executedAt ? Date.parse(tx.executedAt) : NaN;
+  if (Number.isFinite(execMs)) return execMs < connectedMs;   // real time — exact
+
+  const dayKey = (v) => {
+    const d = new Date(v);
+    if (Number.isNaN(d.getTime())) return null;
+    const p = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  };
+  const postedDay = dayKey(tx.postedAt || tx.createdAt || "");
+  const connDay   = dayKey(connectedAt);
+  if (!postedDay || !connDay) return false;
+  return postedDay <= connDay;   // date only — the connection day counts as before
 }
 
 /**
@@ -731,6 +767,31 @@ export function BudgetProvider({ children }) {
     },
     [state.envelopes, state.transactions, state.rules]
   );
+
+  /**
+   * Mark spending as already accounted for — no envelope is touched.
+   *
+   * For a purchase that was already taken out of the balance the user divided
+   * into envelopes. Allocating it would draw the same money out a second time,
+   * park it in Unallocated, and force the user to put it straight back. This
+   * files it as history instead, which is what it actually is.
+   */
+  const markAccountedFor = useCallback((txIds) => {
+    const ids = new Set((txIds || []).map(String));
+    if (!ids.size) return { ok: false, count: 0, message: "Nothing selected." };
+    let count = 0;
+    const transactions = state.transactions.map((t) => {
+      if (!ids.has(String(t.id)) || t.allocated) return t;
+      count++;
+      return { ...t, historical: true, accountedFor: true };
+    });
+    if (!count) return { ok: false, count: 0, message: "Nothing to mark." };
+    dispatch({ type: "SET_TRANSACTIONS", transactions });
+    return {
+      ok: true, count,
+      message: `${count} marked as already accounted for — no envelopes changed`,
+    };
+  }, [state.transactions]);
 
   /**
    * Apply a transfer between the user's own accounts to an envelope.
@@ -1150,28 +1211,11 @@ export function BudgetProvider({ children }) {
         dispatch({ type: "SET_BANK_CONNECTED_AT", at: connectedAt });
       }
 
-      // Compare CALENDAR DAYS, not timestamps. Banks post transactions with a
-      // date, not a time — often literally midnight — so a millisecond compare
-      // against a 10pm connection stamp filed every transaction from the
-      // connection day as history, including spending made AFTER connecting.
-      // Same day as the connection counts as live: better to ask the user to
-      // sort one extra item than to silently bury a real purchase.
-      const dayKey = (v) => {
-        const d = new Date(v);
-        if (Number.isNaN(d.getTime())) return null;
-        const p = (n) => String(n).padStart(2, "0");
-        return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-      };
-      const connectedDay = dayKey(connectedAt);
-
       // Apply categorisation rules to unallocated spends
       let envelopes = state.envelopes;
       let autoCount = 0;
       const processed = fresh.map(raw => {
-        const postedDay = dayKey(raw.postedAt || raw.createdAt || "");
-        const historical =
-          firstConnection ||
-          (!!postedDay && !!connectedDay && postedDay < connectedDay);
+        const historical = firstConnection || isBeforeConnection(raw, connectedAt);
 
         const tx = { ...raw, historical };
 
@@ -1275,6 +1319,7 @@ export function BudgetProvider({ children }) {
       allocateOutstanding,
       allocateMany,
       fundEnvelopeFromTransfer,
+      markAccountedFor,
       deleteEnvelope,
       reorderEnvelopes,
       editEnvelope,
@@ -1319,6 +1364,7 @@ export function BudgetProvider({ children }) {
       allocateOutstanding,
       allocateMany,
       fundEnvelopeFromTransfer,
+      markAccountedFor,
       deleteEnvelope,
       reorderEnvelopes,
       editEnvelope,

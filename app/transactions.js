@@ -1,5 +1,5 @@
 // app/transactions.js
-import React, { useMemo, useState, useCallback } from "react";
+import React, { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import {
   View,
   Text,
@@ -62,7 +62,7 @@ function StatusPill({ historical, isIncome, isSpend, allocated, isTransfer, colo
 
 function TxCard({
   t, onAllocate, envelopes, colors, bankConnectedAt,
-  selectMode, isSelected, onToggleSelect, onEnterSelect,
+  selectMode, isSelected, onToggleSelect, onEnterSelect, onAccountedFor,
 }) {
   // A transfer between the user's own accounts. Only the outgoing leg is shown
   // — the matching incoming leg is filtered out of the list, so the same $20
@@ -97,15 +97,18 @@ function TxCard({
   // transfers and already-sorted rows have nothing to allocate.
   const selectable = isSpend && !isAllocated && !isHistorical;
 
-  const Wrapper = selectMode || selectable ? TouchableOpacity : View;
+  // Always the same component type. Swapping View <-> TouchableOpacity as rows
+  // enter and leave selection forces every row to unmount and remount, which
+  // with removeClippedSubviews is a known source of Android instability.
+  // Interactivity is switched with `disabled` instead.
+  const interactive = selectMode || selectable;
   const wrapperProps = selectMode
     ? { activeOpacity: 0.7, onPress: () => selectable && onToggleSelect?.(t.id) }
-    : selectable
-      ? { activeOpacity: 1, onLongPress: () => onEnterSelect?.(t.id), delayLongPress: 300 }
-      : {};
+    : { activeOpacity: 1, onLongPress: selectable ? () => onEnterSelect?.(t.id) : undefined, delayLongPress: 300 };
 
   return (
-    <Wrapper
+    <TouchableOpacity
+      disabled={!interactive}
       {...wrapperProps}
       style={[
         txcard.wrap,
@@ -200,13 +203,24 @@ function TxCard({
 
       {/* Allocate button for outstanding spends — including ones from the bank */}
       {isSpend && !isHistorical && !isAllocated && !selectMode && (
-        <TouchableOpacity
-          style={[txcard.allocBtn, { backgroundColor: colors.accent }]}
-          onPress={() => onAllocate(t)}
-          activeOpacity={0.8}
-        >
-          <Text style={txcard.allocBtnText}>Allocate to envelope →</Text>
-        </TouchableOpacity>
+        <>
+          <TouchableOpacity
+            style={[txcard.allocBtn, { backgroundColor: colors.accent }]}
+            onPress={() => onAllocate(t)}
+            activeOpacity={0.8}
+          >
+            <Text style={txcard.allocBtnText}>Allocate to envelope →</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => onAccountedFor?.(t.id)}
+            activeOpacity={0.7}
+            style={{ alignSelf: "center", paddingVertical: spacing.sm }}
+          >
+            <Text style={{ color: colors.textMuted, fontSize: typography.xs, fontWeight: typography.semibold }}>
+              Already accounted for
+            </Text>
+          </TouchableOpacity>
+        </>
       )}
 
       {/* Long-press is invisible on its own, so say it once, on the first
@@ -216,7 +230,7 @@ function TxCard({
           Hold to select several
         </Text>
       )}
-    </Wrapper>
+    </TouchableOpacity>
   );
 }
 
@@ -224,7 +238,7 @@ function TxCard({
 
 export default function TransactionsScreen() {
   const {
-    state, allocateOutstanding, allocateMany, fundEnvelopeFromTransfer,
+    state, allocateOutstanding, allocateMany, fundEnvelopeFromTransfer, markAccountedFor,
     unallocated, importBankTransactions, bankConnectedAt,
   } = useBudget();
   const { hasBankAccess } = usePurchase();
@@ -316,6 +330,26 @@ export default function TransactionsScreen() {
     return Math.round(sum * 100) / 100;
   }, [selected, state.transactions]);
 
+  // Inline confirmation instead of Alert. Calling Alert.alert() while the
+  // picker Modal is still closing crashes Android: the Modal is its own window,
+  // and opening a dialog against a window mid-dismissal throws
+  // BadTokenException and kills the app. That is exactly what bulk allocate did
+  // — single allocation never showed an Alert, which is why it never crashed.
+  // A toast lives inside the screen, so there is no second window to race.
+  const [toast, setToast] = useState(null);
+  const toastTimer = useRef(null);
+  const showToast = useCallback((message, ok = true) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({ message, ok });
+    toastTimer.current = setTimeout(() => setToast(null), 2800);
+  }, []);
+  useEffect(() => () => toastTimer.current && clearTimeout(toastTimer.current), []);
+
+  const accountForOne = useCallback((id) => {
+    const res = markAccountedFor([id]);
+    if (res?.message) showToast(res.message, !!res.ok);
+  }, [markAccountedFor, showToast]);
+
   const openChooser  = useCallback(tx => setChooserForTx(tx), []);
   const closeChooser = useCallback(() => setChooserForTx(null), []);
 
@@ -325,7 +359,7 @@ export default function TransactionsScreen() {
       const res = allocateMany([...selected], sourceId);
       closeChooser();
       exitSelect();
-      if (res?.message) Alert.alert(res.ok ? "Allocated" : "Nothing allocated", res.message);
+      if (res?.message) showToast(res.message, !!res.ok);
       return;
     }
     if (!chooserForTx) return;
@@ -338,13 +372,13 @@ export default function TransactionsScreen() {
       if (sourceId === "unallocated") { closeChooser(); return; } // already unallocated
       const res = fundEnvelopeFromTransfer(chooserForTx.id, sourceId);
       closeChooser();
-      if (res?.message) Alert.alert(res.ok ? "Set aside" : "Couldn't do that", res.message);
+      if (res?.message) showToast(res.message, !!res.ok);
       return;
     }
 
     allocateOutstanding(chooserForTx.id, sourceId);
     closeChooser();
-  }, [selectMode, selected, allocateMany, allocateOutstanding, fundEnvelopeFromTransfer, chooserForTx, closeChooser, exitSelect]);
+  }, [selectMode, selected, allocateMany, allocateOutstanding, fundEnvelopeFromTransfer, chooserForTx, closeChooser, exitSelect, showToast]);
 
   const handleImport = async () => {
     setImporting(true);
@@ -368,8 +402,9 @@ export default function TransactionsScreen() {
       isSelected={selected.has(String(t.id))}
       onToggleSelect={toggleSelect}
       onEnterSelect={enterSelect}
+      onAccountedFor={accountForOne}
     />
-  ), [openChooser, state.envelopes, colors, bankConnectedAt, selectMode, selected, toggleSelect, enterSelect]);
+  ), [openChooser, state.envelopes, colors, bankConnectedAt, selectMode, selected, toggleSelect, enterSelect, accountForOne]);
 
   return (
     <SafeAreaView style={s.screen}>
@@ -470,9 +505,46 @@ export default function TransactionsScreen() {
         removeClippedSubviews
       />
 
+      {/* ── Inline confirmation (replaces Alert — see showToast) ── */}
+      {toast && (
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute", left: spacing.lg, right: spacing.lg,
+            bottom: selectMode ? 96 : spacing.lg,
+            backgroundColor: toast.ok ? colors.accent : colors.danger,
+            borderRadius: radius.md, paddingVertical: spacing.md, paddingHorizontal: spacing.lg,
+            shadowColor: "#000", shadowOpacity: 0.25, shadowRadius: 8, shadowOffset: { width: 0, height: 3 },
+            elevation: 6,
+          }}
+        >
+          <Text style={{ color: "#FFFFFF", fontSize: typography.sm, fontWeight: typography.semibold, textAlign: "center" }}>
+            {toast.message}
+          </Text>
+        </View>
+      )}
+
       {/* ── Bulk action bar ── */}
       {selectMode && (
         <View style={[bulk.bar, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
+          {/* For spending that was already taken out of the balance you divided
+              into envelopes — files it as history without touching any envelope,
+              instead of the draw-out-and-put-back round trip. */}
+          <TouchableOpacity
+            style={{ alignItems: "center", paddingVertical: spacing.sm, marginBottom: spacing.xs, opacity: selected.size ? 1 : 0.4 }}
+            onPress={() => {
+              if (!selected.size) return;
+              const res = markAccountedFor([...selected]);
+              exitSelect();
+              if (res?.message) showToast(res.message, !!res.ok);
+            }}
+            disabled={!selected.size}
+            activeOpacity={0.7}
+          >
+            <Text style={{ color: colors.textSecondary, fontSize: typography.sm, fontWeight: typography.semibold }}>
+              Already accounted for — don't touch my envelopes
+            </Text>
+          </TouchableOpacity>
           <TouchableOpacity
             style={[bulk.btn, {
               backgroundColor: selected.size ? colors.accent : colors.cardAlt,
