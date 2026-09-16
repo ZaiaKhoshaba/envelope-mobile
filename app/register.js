@@ -51,7 +51,9 @@ export default function RegisterScreen() {
     const res = await register(em, password, fn, sn);
     setSubmitting(false);
     if (res.ok) {
-      router.replace("/onboarding");
+      // replay=0 spells out that this is a first run, so the guide always ends
+      // on "Choose your plan" even if it was last opened from Settings.
+      router.replace("/onboarding?replay=0");
     }
   };
 

@@ -1,14 +1,19 @@
 // app/onboarding.js
 // ─────────────────────────────────────────────────────────────────────────────
-// 6-step onboarding flow shown once after registration:
-//   Step 1 — Welcome
-//   Step 2 — How envelopes work
-//   Step 3 — Fixed vs Flexible
-//   Step 4 — Payday automatic allocation
-//   Step 5 — Forecasting shortfalls
-//   Step 6 — Connect your bank (or skip)
+// "How Tend works" — the animated guide.
+//   First run (straight after registration): six slides ending on "Choose
+//   your plan", then PIN setup.
+//   Replay (Settings → How Tend works, opened with ?replay=1): the same slides
+//   without "Choose your plan"; it returns to wherever it was opened from.
+//
+// Slides move sideways like pages. Between the first two, the pile of money on
+// "Welcome to Tend" whooshes across into the envelopes on "The envelope
+// system": the screen notes where the pile and the envelopes sit, flies the
+// bills across in a layer above both slides, and hands each bill to its
+// envelope as it arrives. The drawings and each slide's animation live in
+// components/onboarding/.
 // ─────────────────────────────────────────────────────────────────────────────
-import React, { useState, useRef, useMemo, useCallback } from "react";
+import React, { useState, useRef, useMemo, useCallback, useEffect } from "react";
 import {
   View,
   Text,
@@ -17,11 +22,25 @@ import {
   SafeAreaView,
   ScrollView,
   Animated,
+  Easing,
   Alert,
+  useWindowDimensions,
 } from "react-native";
-import { useRouter, useLocalSearchParams } from "expo-router";
+import { useRouter, useLocalSearchParams, useFocusEffect } from "expo-router";
 import { useTheme, spacing, radius, typography } from "../theme";
 import { usePurchase, PLANS, TRIAL_DAYS } from "../context/PurchaseContext";
+import {
+  PopIn,
+  RiseIn,
+  WavingHand,
+  WelcomeScene,
+  EnvelopeScene,
+  TypesScene,
+  AllocationScene,
+  ForecastScene,
+  MoneyFlight,
+  planFlight,
+} from "../components/onboarding/scenes";
 
 // ── Slide content ─────────────────────────────────────────────────────────────
 
@@ -91,14 +110,106 @@ function StepDots({ count, current, colors }) {
   );
 }
 
+// ── One slide ─────────────────────────────────────────────────────────────────
+// The illustration circle, step dots, title and text, then the slide's own
+// animated scene. `onGeo` reports where things were laid out so the money can
+// be flown from one slide to the next.
+
+function Slide({ slide, index, count, colors, base, onGeo, renderScene }) {
+  const scrollRef = useRef(null);
+  return (
+    <ScrollView
+      ref={scrollRef}
+      style={s.fill}
+      contentContainerStyle={s.scroll}
+      showsVerticalScrollIndicator={false}
+    >
+      <View style={s.slideWrap} onLayout={(e) => onGeo("wrap", e.nativeEvent.layout)}>
+        <PopIn delay={base} style={[s.emojiWrap, { backgroundColor: colors.accentSoft }]}>
+          {slide.key === "welcome"
+            ? <WavingHand delay={base + 500} style={s.emoji} />
+            : <Text style={s.emoji}>{slide.emoji}</Text>}
+        </PopIn>
+
+        <StepDots count={count} current={index} colors={colors} />
+
+        <RiseIn delay={base + 80}>
+          <Text style={[s.title, { color: colors.textPrimary }]}>{slide.title}</Text>
+        </RiseIn>
+        <RiseIn delay={base + 170}>
+          <Text style={[s.body, { color: colors.textSecondary }]}>{slide.body}</Text>
+        </RiseIn>
+
+        <View style={s.extra} onLayout={(e) => onGeo("extra", e.nativeEvent.layout)}>
+          {renderScene(scrollRef)}
+        </View>
+      </View>
+    </ScrollView>
+  );
+}
+
+// ── Plan choice (first run only) ──────────────────────────────────────────────
+
+function PricingPanel({ colors, base, onSubscribe, onContinueFree }) {
+  const items = [
+    <View key="free" style={[s.highlight, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      <Text style={s.highlightIcon}>✅</Text>
+      <View style={{ flex: 1 }}>
+        <Text style={[s.highlightTitle, { color: colors.textPrimary }]}>Free — always</Text>
+        <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
+          Envelopes, budgeting, income allocation, forecasts
+        </Text>
+      </View>
+    </View>,
+    <View key="premium" style={[s.highlight, { backgroundColor: colors.accentSoft, borderColor: colors.accent }]}>
+      <Text style={s.highlightIcon}>🏦</Text>
+      <View style={{ flex: 1 }}>
+        <Text style={[s.highlightTitle, { color: colors.accent }]}>
+          Premium — {PLANS.monthly.price}/mo
+        </Text>
+        <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
+          Automatic bank sync, one-tap transaction allocation, spend notifications
+        </Text>
+      </View>
+    </View>,
+    <Text key="trial" style={{ color: colors.textMuted, fontSize: typography.xs, textAlign: "center", marginTop: spacing.xs }}>
+      30-day free trial included — no card required to start.
+    </Text>,
+    <TouchableOpacity
+      key="subscribe"
+      style={[s.ctaBtn, { backgroundColor: colors.accent, marginTop: spacing.sm }]}
+      onPress={onSubscribe}
+      activeOpacity={0.85}
+    >
+      <Text style={s.ctaBtnText}>Subscribe — {PLANS.monthly.price}/mo</Text>
+    </TouchableOpacity>,
+    <TouchableOpacity
+      key="free-continue"
+      style={[s.backBtn, { borderColor: colors.border, alignSelf: "stretch", marginTop: spacing.xs }]}
+      onPress={onContinueFree}
+      activeOpacity={0.7}
+    >
+      <Text style={[s.backBtnText, { color: colors.textSecondary, textAlign: "center" }]}>
+        Continue free (no bank sync)
+      </Text>
+    </TouchableOpacity>,
+  ];
+  return (
+    <View style={s.highlightsWrap}>
+      {items.map((item, i) => (
+        <RiseIn key={item.key} delay={base + 250 + i * 110} distance={16}>{item}</RiseIn>
+      ))}
+    </View>
+  );
+}
+
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export default function Onboarding() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
   const { colors } = useTheme();
   const { continueForFree, purchase } = usePurchase();
-  const [step, setStep] = useState(0);
-  const fadeAnim = useRef(new Animated.Value(1)).current;
 
   // Replaying the guide from Settings is not the same as signing up. Someone
   // re-reading it already has an account, has already chosen a plan, and may
@@ -113,9 +224,32 @@ export default function Onboarding() {
     () => (isReplay ? SLIDES.filter((sl) => sl.key !== "pricing") : SLIDES),
     [isReplay]
   );
+  const slidesRef = useRef(slides);
+  slidesRef.current = slides;
 
-  const slide = slides[step];
-  const isLast = step === slides.length - 1;
+  const [step, setStep] = useState(0);
+  const stepRef = useRef(0);
+
+  // How the current slide arrived. `id` changes on every move, so each visit
+  // mounts fresh and plays its animation again; `from` is the slide sliding
+  // out, and `pager` drives the sideways motion of both.
+  const [nav, setNav] = useState(() => ({
+    id: 0, from: null, fromId: null, dir: 1, whoosh: false, pager: new Animated.Value(1),
+  }));
+  const navRef = useRef(nav);
+  navRef.current = nav;
+
+  // The whoosh: where the pile and the envelopes were laid out, the flight
+  // itself, and which bills have reached their envelope so far.
+  const geo = useRef({});
+  const flownFor = useRef(null);
+  const pendingWhoosh = useRef(null);
+  const [flight, setFlight] = useState(null);
+  const [arrived, setArrived] = useState(0);
+
+  const safeStep = Math.min(step, slides.length - 1);
+  const slide = slides[safeStep];
+  const isLast = safeStep === slides.length - 1;
 
   // Where the guide sends you when it's finished.
   const finish = useCallback(() => {
@@ -128,25 +262,105 @@ export default function Onboarding() {
     router.replace("/pin-setup");
   }, [isReplay, router]);
 
-  const goTo = (nextStep) => {
-    Animated.sequence([
-      Animated.timing(fadeAnim, { toValue: 0, duration: 120, useNativeDriver: true }),
-      Animated.timing(fadeAnim, { toValue: 1, duration: 180, useNativeDriver: true }),
-    ]).start();
-    setTimeout(() => setStep(nextStep), 120);
-  };
+  const goTo = useCallback((next, { reset = false } = {}) => {
+    const prev = stepRef.current;
+    const n = navRef.current;
+    if (!reset) {
+      if (next < 0 || next >= slidesRef.current.length || next === prev) return;
+      if (n.from != null) return; // still sliding
+    }
+    const whoosh = !reset && prev === 0 && next === 1;
+    // Note which two slides the money flies between. Both have to report where
+    // they were laid out before the flight can be planned, and that can land
+    // after the slide transition has already finished and tidied itself away —
+    // so the flight keeps its own note rather than reading it back from `nav`.
+    pendingWhoosh.current = whoosh
+      ? { id: n.id + 1, fromKey: `welcome-${n.id}`, toKey: `how-${n.id + 1}` }
+      : null;
+    stepRef.current = next;
+    setFlight(null);
+    setNav(
+      reset
+        ? { id: n.id + 1, from: null, fromId: null, dir: 1, whoosh: false, pager: new Animated.Value(1) }
+        : {
+            id: n.id + 1,
+            from: prev,
+            fromId: n.id,
+            dir: next > prev ? 1 : -1,
+            whoosh,
+            pager: new Animated.Value(0),
+          }
+    );
+    setStep(next);
+  }, []);
 
-  const handleCta = async () => {
+  // Slide the outgoing and incoming slides across together.
+  useEffect(() => {
+    if (nav.from == null) return undefined;
+    const id = nav.id;
+    const across = Animated.timing(nav.pager, {
+      toValue: 1,
+      duration: 540,
+      delay: nav.whoosh ? 150 : 0,
+      easing: Easing.bezier(0.65, 0, 0.35, 1),
+      useNativeDriver: true,
+    });
+    // Only drop the outgoing slide when the slide really finished. A stopped
+    // animation (React re-running this effect in development) must not whip it
+    // away the moment it starts.
+    across.start(({ finished }) => {
+      if (finished) setNav((x) => (x.id === id ? { ...x, from: null, fromId: null } : x));
+    });
+    return () => across.stop();
+  }, [nav.id]);
+
+  // The guide stays mounted between visits, so opening it again starts from the top.
+  const seenFocus = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      if (seenFocus.current) goTo(0, { reset: true });
+      seenFocus.current = true;
+    }, [goTo])
+  );
+
+  // Once both the pile (slide 1) and the envelopes (slide 2) have been laid
+  // out, plan the flight between them.
+  const tryWhoosh = useCallback(() => {
+    const p = pendingWhoosh.current;
+    if (!p || flownFor.current === p.id) return;
+    const a = geo.current[p.fromKey];
+    const b = geo.current[p.toKey];
+    if (!a?.wrap || !a?.extra || !a?.inner || !b?.wrap || !b?.extra || !b?.inner) return;
+    flownFor.current = p.id;
+    const pile = { x: a.wrap.x + a.extra.x + a.inner.x, y: a.wrap.y + a.extra.y + a.inner.y };
+    const row = {
+      x: b.wrap.x + b.extra.x + b.inner.x,
+      y: b.wrap.y + b.extra.y + b.inner.y,
+      width: b.inner.width,
+    };
+    setArrived(0);
+    setFlight({ id: p.id, fromKey: p.fromKey, toKey: p.toKey, plan: planFlight(pile, row) });
+  }, []);
+
+  const reportGeo = useCallback((key, part, layout) => {
+    const g = geo.current[key] || (geo.current[key] = {});
+    g[part] = layout;
+    tryWhoosh();
+  }, [tryWhoosh]);
+
+  const handleCta = () => {
     if (isLast) {
       // "Start free trial" — trial begins automatically, just proceed
       finish();
     } else {
-      goTo(step + 1);
+      goTo(safeStep + 1);
     }
   };
 
   const handleSkip = async () => {
-    await continueForFree();
+    // Only a brand-new account chooses the free plan by skipping. Skipping a
+    // replay must leave whatever plan the person already has alone.
+    if (!isReplay) await continueForFree();
     finish();
   };
 
@@ -168,187 +382,113 @@ export default function Onboarding() {
     );
   };
 
+  const renderScene = (sl, visitId, scrollRef, report) => {
+    const base = visitId === 0 ? 150 : 300;
+    switch (sl.key) {
+      case "welcome":
+        return (
+          <WelcomeScene
+            base={base}
+            hidePile={!!flight && flight.fromKey === `welcome-${visitId}`}
+            onPileLayout={(l) => report("inner", l)}
+          />
+        );
+      case "how":
+        return (
+          <EnvelopeScene
+            base={base}
+            mode={nav.whoosh && nav.id === visitId ? "whoosh" : "direct"}
+            arrivedMask={flight && flight.toKey === `how-${visitId}` ? arrived : 0}
+            onRowLayout={(l) => report("inner", l)}
+          />
+        );
+      case "types":
+        return <TypesScene base={base} />;
+      case "allocation":
+        return <AllocationScene base={base} scrollRef={scrollRef} />;
+      case "forecast":
+        return <ForecastScene base={base} />;
+      case "pricing":
+        return (
+          <PricingPanel
+            colors={colors}
+            base={base}
+            onSubscribe={() => handleSubscribe("monthly")}
+            onContinueFree={handleSkip}
+          />
+        );
+      default:
+        return null;
+    }
+  };
+
+  const renderSlide = (index, visitId) => {
+    const sl = slides[index];
+    if (!sl) return null;
+    const key = `${sl.key}-${visitId}`;
+    const report = (part, layout) => reportGeo(key, part, layout);
+    return (
+      <Slide
+        slide={sl}
+        index={index}
+        count={slides.length}
+        colors={colors}
+        base={visitId === 0 ? 150 : 300}
+        onGeo={report}
+        renderScene={(scrollRef) => renderScene(sl, visitId, scrollRef, report)}
+      />
+    );
+  };
+
+  const motion = useMemo(() => ({
+    leaving: nav.pager.interpolate({ inputRange: [0, 1], outputRange: [0, -nav.dir * width] }),
+    entering: nav.pager.interpolate({ inputRange: [0, 1], outputRange: [nav.dir * width, 0] }),
+  }), [nav.pager, nav.dir, width]);
+
+  const leaving = nav.from != null ? slides[nav.from] : null;
+
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: colors.bg }]}>
 
-      {/* Skip button top-right (not on last two steps) */}
-      {step < slides.length - 1 && (
+      <View style={s.stage}>
+        {leaving && (
+          <Animated.View
+            key={`${leaving.key}-${nav.fromId}`}
+            style={[StyleSheet.absoluteFill, { transform: [{ translateX: motion.leaving }] }]}
+          >
+            {renderSlide(nav.from, nav.fromId)}
+          </Animated.View>
+        )}
+        <Animated.View
+          key={`${slide.key}-${nav.id}`}
+          style={[StyleSheet.absoluteFill, { transform: [{ translateX: motion.entering }] }]}
+        >
+          {renderSlide(safeStep, nav.id)}
+        </Animated.View>
+        {flight && (
+          <MoneyFlight
+            key={`flight-${flight.id}`}
+            plan={flight.plan}
+            arrivedMask={arrived}
+            onArrive={(bit) => setArrived((m) => m | (1 << bit))}
+          />
+        )}
+      </View>
+
+      {/* Skip button top-right (not on the last step) */}
+      {!isLast && (
         <TouchableOpacity style={s.skipBtn} onPress={handleSkip} activeOpacity={0.7}>
           <Text style={[s.skipText, { color: colors.textMuted }]}>Skip</Text>
         </TouchableOpacity>
       )}
 
-      <ScrollView
-        style={{ flex: 1 }}
-        contentContainerStyle={s.scroll}
-        showsVerticalScrollIndicator={false}
-      >
-        <Animated.View style={[s.slideWrap, { opacity: fadeAnim }]}>
-
-          {/* Emoji illustration */}
-          <View style={[s.emojiWrap, { backgroundColor: colors.accentSoft }]}>
-            <Text style={s.emoji}>{slide.emoji}</Text>
-          </View>
-
-          {/* Step dots */}
-          <StepDots count={slides.length} current={step} colors={colors} />
-
-          {/* Text */}
-          <Text style={[s.title, { color: colors.textPrimary }]}>{slide.title}</Text>
-          <Text style={[s.body, { color: colors.textSecondary }]}>{slide.body}</Text>
-
-          {/* Feature highlights — types slide */}
-          {slide.key === "types" && (
-            <View style={s.highlightsWrap}>
-              <View style={[s.highlight, { backgroundColor: colors.fixedBg, borderColor: colors.border }]}>
-                <Text style={s.highlightIcon}>🔒</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.highlightTitle, { color: colors.textPrimary }]}>Fixed</Text>
-                  <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
-                    Rent, mortgage, insurance, subscriptions — must always be filled
-                  </Text>
-                </View>
-              </View>
-              <View style={[s.highlight, { backgroundColor: colors.flexibleBg, borderColor: colors.border }]}>
-                <Text style={s.highlightIcon}>🎯</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.highlightTitle, { color: colors.flexible }]}>Flexible</Text>
-                  <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
-                    Dining, entertainment, travel — spend freely within your limit
-                  </Text>
-                </View>
-              </View>
-              <View style={[s.highlight, { backgroundColor: colors.successBg, borderColor: colors.border }]}>
-                <Text style={s.highlightIcon}>📈</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.highlightTitle, { color: colors.success }]}>Savings</Text>
-                  <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
-                    Holiday, emergency fund, car — grows with a fixed contribution each pay
-                  </Text>
-                </View>
-              </View>
-            </View>
-          )}
-
-          {/* Feature highlights — allocation slide */}
-          {slide.key === "allocation" && (
-            <View style={s.highlightsWrap}>
-              <View style={[s.highlight, { backgroundColor: colors.accentSoft, borderColor: colors.border }]}>
-                <Text style={s.highlightIcon}>🏠</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.highlightTitle, { color: colors.textPrimary }]}>Mortgage — 67%</Text>
-                  <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
-                    Gets 67% of every pay automatically
-                  </Text>
-                </View>
-                <Text style={[s.highlightBadge, { color: colors.accent }]}>+$1,005</Text>
-              </View>
-              <View style={[s.highlight, { backgroundColor: colors.accentSoft, borderColor: colors.border }]}>
-                <Text style={s.highlightIcon}>🚗</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.highlightTitle, { color: colors.textPrimary }]}>Car — 16%</Text>
-                  <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
-                    Gets its proportional share each pay
-                  </Text>
-                </View>
-                <Text style={[s.highlightBadge, { color: colors.accent }]}>+$240</Text>
-              </View>
-              <View style={[s.highlight, { backgroundColor: colors.accentSoft, borderColor: colors.border }]}>
-                <Text style={s.highlightIcon}>🏖</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.highlightTitle, { color: colors.textPrimary }]}>Holiday — 16%</Text>
-                  <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
-                    Building up steadily towards its target
-                  </Text>
-                </View>
-                <Text style={[s.highlightBadge, { color: colors.accent }]}>+$240</Text>
-              </View>
-            </View>
-          )}
-
-          {/* Pricing slide */}
-          {slide.key === "pricing" && (
-            <View style={s.highlightsWrap}>
-              {/* Free tier */}
-              <View style={[s.highlight, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <Text style={s.highlightIcon}>✅</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.highlightTitle, { color: colors.textPrimary }]}>Free — always</Text>
-                  <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
-                    Envelopes, budgeting, income allocation, forecasts
-                  </Text>
-                </View>
-              </View>
-              {/* Premium tier */}
-              <View style={[s.highlight, { backgroundColor: colors.accentSoft, borderColor: colors.accent }]}>
-                <Text style={s.highlightIcon}>🏦</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.highlightTitle, { color: colors.accent }]}>
-                    Premium — {PLANS.monthly.price}/mo
-                  </Text>
-                  <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
-                    Automatic bank sync, one-tap transaction allocation, spend notifications
-                  </Text>
-                </View>
-              </View>
-              {/* Trial note */}
-              <Text style={{ color: colors.textMuted, fontSize: typography.xs, textAlign: "center", marginTop: spacing.xs }}>
-                30-day free trial included — no card required to start.
-              </Text>
-              {/* Subscribe button */}
-              <TouchableOpacity
-                style={[s.ctaBtn, { backgroundColor: colors.accent, marginTop: spacing.sm }]}
-                onPress={() => handleSubscribe("monthly")}
-                activeOpacity={0.85}
-              >
-                <Text style={s.ctaBtnText}>Subscribe — {PLANS.monthly.price}/mo</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[s.backBtn, { borderColor: colors.border, alignSelf: "stretch", marginTop: spacing.xs }]}
-                onPress={handleSkip}
-                activeOpacity={0.7}
-              >
-                <Text style={[s.backBtnText, { color: colors.textSecondary, textAlign: "center" }]}>
-                  Continue free (no bank sync)
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* Feature highlights — forecast slide */}
-          {slide.key === "forecast" && (
-            <View style={s.highlightsWrap}>
-              <View style={[s.highlight, { backgroundColor: colors.successBg, borderColor: colors.success }]}>
-                <Text style={s.highlightIcon}>✅</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.highlightTitle, { color: colors.success }]}>Groceries — on track</Text>
-                  <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
-                    Projected income will cover this by the due date
-                  </Text>
-                </View>
-              </View>
-              <View style={[s.highlight, { backgroundColor: colors.dangerBg, borderColor: colors.danger }]}>
-                <Text style={s.highlightIcon}>⚠️</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.highlightTitle, { color: colors.danger }]}>Mortgage — $135 short</Text>
-                  <Text style={[s.highlightBody, { color: colors.textSecondary }]}>
-                    Not enough pays left before the due date
-                  </Text>
-                </View>
-              </View>
-            </View>
-          )}
-
-        </Animated.View>
-      </ScrollView>
-
       {/* Back on the pricing slide too — it has its own inline buttons, so it
           was the one slide with no way to return and re-read the previous one. */}
-      {slide.key === "pricing" && step > 0 && (
+      {slide.key === "pricing" && safeStep > 0 && (
         <View style={[s.footer, { borderTopColor: colors.border, paddingTop: spacing.sm }]}>
           <TouchableOpacity
             style={[s.backBtn, { borderColor: colors.border, alignSelf: "flex-start" }]}
-            onPress={() => goTo(step - 1)}
+            onPress={() => goTo(safeStep - 1)}
             activeOpacity={0.7}
           >
             <Text style={[s.backBtnText, { color: colors.textSecondary }]}>← Back</Text>
@@ -360,10 +500,10 @@ export default function Onboarding() {
       {slide.key !== "pricing" && (
         <View style={[s.footer, { borderTopColor: colors.border }]}>
           <View style={s.footerRow}>
-            {step > 0 && (
+            {safeStep > 0 && (
               <TouchableOpacity
                 style={[s.backBtn, { borderColor: colors.border }]}
-                onPress={() => goTo(step - 1)}
+                onPress={() => goTo(safeStep - 1)}
                 activeOpacity={0.7}
               >
                 <Text style={[s.backBtnText, { color: colors.textSecondary }]}>← Back</Text>
@@ -388,6 +528,8 @@ export default function Onboarding() {
 
 const s = StyleSheet.create({
   safe: { flex: 1 },
+  fill: { flex: 1 },
+  stage: { flex: 1, overflow: "hidden" },
 
   skipBtn: {
     position: "absolute",
@@ -437,7 +579,12 @@ const s = StyleSheet.create({
     textAlign: "center",
   },
 
-  // Feature highlights
+  extra: {
+    width: "100%",
+    alignItems: "center",
+  },
+
+  // Plan choice
   highlightsWrap: {
     width: "100%",
     gap: spacing.sm,
@@ -461,12 +608,6 @@ const s = StyleSheet.create({
   },
   highlightBody: {
     fontSize: typography.sm,
-  },
-  highlightBadge: {
-    fontSize: typography.sm,
-    fontWeight: typography.bold,
-    alignSelf: "center",
-    marginLeft: spacing.xs,
   },
 
   // Footer
