@@ -438,10 +438,15 @@ function SetupChecklist({ state, router, colors, bankConnected }) {
 
 // ── Main screen ───────────────────────────────────────────────────────────────
 
+// Shown to friends and family testing the app: the daily bank refresh is an
+// early-access limit from our data provider, not the finished product.
+const TESTING_NOTE =
+  "Testing build: one bank refresh a day. We're working towards near-live updates and unlimited refreshes for launch.";
+
 export default function Home() {
   const router  = useRouter();
   const { colors, isDark, toggle } = useTheme();
-  const { total, allocated, unallocated, overallocated, state, bankBalance, lastBalanceSync, balanceAsOf, refreshBankBalance, importBankTransactions } = useBudget();
+  const { total, allocated, unallocated, overallocated, state, bankBalance, lastBalanceSync, balanceAsOf, refreshBankBalance, requestBankRefresh, importBankTransactions } = useBudget();
   const { isAuthenticated, loading, user } = useAuth();
 
   useEffect(() => {
@@ -451,11 +456,27 @@ export default function Home() {
   // Keep the bank balance fresh: pull-to-refresh, on screen focus, and when the
   // app returns to the foreground (e.g. after a "transactions synced" alert).
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshNote, setRefreshNote] = useState(null);
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([refreshBankBalance(), importBankTransactions()]);
+    setRefreshNote(null);
+    // With a bank connected, pulling down now asks the bank for new
+    // transactions rather than re-reading what Fiskil already had.
+    let res = { ok: true, code: "local" };
+    if (bankBalance != null) {
+      res = await requestBankRefresh();
+    } else {
+      await Promise.all([refreshBankBalance(), importBankTransactions()]);
+    }
+    if (res.code === "daily_limit") {
+      setRefreshNote(TESTING_NOTE);
+    } else if (res.code === "refresh_failed") {
+      setRefreshNote("Your bank didn't answer that request. Your next automatic update still arrives as usual.");
+    } else if (res.code === "still_working") {
+      setRefreshNote("Your bank is still working on it. This can take a few minutes — we'll let you know when it lands.");
+    }
     setRefreshing(false);
-  }, [refreshBankBalance, importBankTransactions]);
+  }, [bankBalance, requestBankRefresh, refreshBankBalance, importBankTransactions]);
 
   useFocusEffect(
     useCallback(() => {
@@ -556,7 +577,7 @@ export default function Home() {
           {bankBalance != null && (
             <Text style={{ color: "rgba(255,255,255,0.85)", fontSize: typography.xs, marginTop: 4, marginBottom: 2 }}>
               {refreshing
-                ? "Updating…"
+                ? "Checking with your bank…"
                 : /* Age of the BANK's figure, not of our request. Asking again does
                      not make the bank's data newer, so reporting our fetch time
                      made stale CDR data look current. */
@@ -573,6 +594,15 @@ export default function Home() {
             <Text style={styles.heroBarText}>Free {100 - allocatedPct}%</Text>
           </View>
         </View>
+
+        {/* ── Note from the last pull-to-refresh (early access / testing) ── */}
+        {refreshNote && (
+          <View style={[s.card, { backgroundColor: colors.accentSoft, borderColor: colors.accent, padding: spacing.md }]}>
+            <Text style={{ color: colors.textSecondary, fontSize: typography.sm, lineHeight: 18 }}>
+              {refreshNote}
+            </Text>
+          </View>
+        )}
 
         {/* ── Summary row ── */}
         <View style={s.cardRow}>

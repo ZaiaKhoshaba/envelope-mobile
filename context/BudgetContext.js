@@ -1273,6 +1273,53 @@ export function BudgetProvider({ children }) {
     }
   }, [state.transactions, state.envelopes, state.rules]);
 
+  /* -----------------------------------------------------------
+     ASK THE BANK NOW (Fiskil early access)
+     Fiskil ingests twice a day; early access allows one extra refresh per
+     person per day. The reply only means "queued" — the data arrives later and
+     Fiskil tells our backend by webhook, so we wait for that, then pull the new
+     balance and transactions in.
+     Defined here, below importBankTransactions, because it calls it.
+  ----------------------------------------------------------- */
+  const requestBankRefresh = useCallback(async ({ timeoutMs = 45000 } = {}) => {
+    const t = tokenRef.current;
+    if (!t) return { ok: false, code: "no_auth" };
+    const headers = { Authorization: `Bearer ${t}` };
+
+    let queued;
+    try {
+      const r = await fetch(`${BACKEND_URL}/fiskil/refresh`, { method: "POST", headers });
+      if (r.status === 401) { await authExpiredRef.current?.(); return { ok: false, code: "auth_expired" }; }
+      queued = await r.json().catch(() => ({}));
+      // 429 means today's refresh is already spent. That is a limit, not a
+      // fault, and the caller says so in plain words rather than as an error.
+      if (!r.ok) return { ok: false, code: queued?.code || (r.status === 429 ? "daily_limit" : "error") };
+    } catch {
+      return { ok: false, code: "offline" };
+    }
+
+    // Wait for the sync to land, checking every few seconds.
+    const deadline = Date.now() + timeoutMs;
+    let status = queued?.status || "queued";
+    while (Date.now() < deadline) {
+      await new Promise((done) => setTimeout(done, 3000));
+      try {
+        const r = await fetch(`${BACKEND_URL}/fiskil/refresh/state`, { headers });
+        if (!r.ok) break;
+        const s = await r.json();
+        status = s?.status || status;
+        if (status === "completed" || status === "failed") break;
+      } catch { break; }
+    }
+
+    // Pull whatever is there either way: a slow refresh still lands eventually,
+    // and the scheduled sync may have brought something in the meantime.
+    await Promise.all([refreshBankBalance(), importBankTransactions()]);
+    if (status === "failed")    return { ok: false, code: "refresh_failed" };
+    if (status !== "completed") return { ok: true,  code: "still_working" };
+    return { ok: true, code: "completed" };
+  }, [refreshBankBalance, importBankTransactions]);
+
   const resetAll = useCallback(async () => {
     try {
       if (user?.id) {
@@ -1338,6 +1385,7 @@ export function BudgetProvider({ children }) {
       balanceAsOf: state.balanceAsOf,
       setBankBalance,
       refreshBankBalance,
+      requestBankRefresh,
       disconnectBank,
 
       rules: state.rules,
@@ -1356,6 +1404,7 @@ export function BudgetProvider({ children }) {
       state,
       setBankBalance,
       refreshBankBalance,
+      requestBankRefresh,
       disconnectBank,
       addEnvelope,
       addIncome,
