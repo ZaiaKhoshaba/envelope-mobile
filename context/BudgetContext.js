@@ -394,12 +394,17 @@ function normalizeTx(t) {
     merchant:    t.merchant || t.counterparty || t.description || "Bank Transaction",
     description: t.description || t.narrative || t.merchant || "",
     imported:    true,
-    postedAt:    t.postedAt || t.date || new Date().toISOString(),
+    // Fiskil supplies no posted date — the execution time is the only real
+    // timestamp a bank transaction carries. Falling straight through to "now"
+    // stamped every imported purchase with the moment it was imported, so the
+    // list read as though everything happened today.
+    postedAt:    t.postedAt || t.date || t.executedAt || new Date().toISOString(),
     allocations: Array.isArray(t.allocations) ? t.allocations : [],
     allocated:   !!t.allocated,
     accountId:   t.accountId != null ? String(t.accountId) : null,
     bankType:    t.type || null,
     executedAt:  t.executedAt || null,   // real time of the transaction, when the bank gives one
+    status:      t.status || null,       // PENDING until the bank finalises it
   };
 }
 
@@ -1168,7 +1173,9 @@ export function BudgetProvider({ children }) {
             const r = await fetch(`${BACKEND_URL}/fiskil/transactions`, {
               method:  "POST",
               headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
-              body:    JSON.stringify({ limit: 100 }),
+              // v:2 — this build matches on account + time + amount as well as
+              // on id, so the backend can send Fiskil's real transaction id.
+              body:    JSON.stringify({ limit: 100, v: 2 }),
             });
             // Same expired-token trap as the balance fetch: silently importing
             // nothing looked identical to "no new transactions".
@@ -1190,10 +1197,32 @@ export function BudgetProvider({ children }) {
         return { ok: true, imported: 0, message: "No new transactions found." };
       }
 
-      // Dedupe against existing transactions
+      // Dedupe against existing transactions — by id, and also by a natural key
+      // of account + exact time + amount.
+      //
+      // The id has changed: the backend now uses Fiskil's real transaction_id
+      // instead of inventing one from account + amount. That old id collided
+      // whenever two purchases shared a dollar amount, which is why new
+      // spending silently never appeared. The natural key means the same
+      // purchase arriving under its new id is still recognised, so nothing
+      // lands twice during the changeover.
       const existing = Array.isArray(state.transactions) ? state.transactions : [];
       const existingIds = new Set(existing.map((t) => String(t.id)));
-      const fresh = importedTxs.filter((t) => !existingIds.has(String(t.id)));
+      const naturalKey = (t) =>
+        t.executedAt ? `${t.accountId || ""}|${t.executedAt}|${Number(t.amount)}` : null;
+      const existingKeys = new Set(existing.map(naturalKey).filter(Boolean));
+      const seen = new Set();
+      const fresh = importedTxs.filter((t) => {
+        if (existingIds.has(String(t.id))) return false;
+        const key = naturalKey(t);
+        if (key && existingKeys.has(key)) return false;
+        // Two rows in one response could share an id under the old scheme; keep
+        // only the first so a single import can't duplicate itself.
+        const once = key || String(t.id);
+        if (seen.has(once)) return false;
+        seen.add(once);
+        return true;
+      });
 
       if (fresh.length === 0) {
         return { ok: true, imported: 0, message: "Already up to date." };
@@ -1291,10 +1320,20 @@ export function BudgetProvider({ children }) {
       const r = await fetch(`${BACKEND_URL}/fiskil/refresh`, { method: "POST", headers });
       if (r.status === 401) { await authExpiredRef.current?.(); return { ok: false, code: "auth_expired" }; }
       queued = await r.json().catch(() => ({}));
-      // 429 means today's refresh is already spent. That is a limit, not a
-      // fault, and the caller says so in plain words rather than as an error.
-      if (!r.ok) return { ok: false, code: queued?.code || (r.status === 429 ? "daily_limit" : "error") };
+      // 429 means the last refresh was under 24 hours ago. That is a limit, not
+      // a fault — but still pull in whatever the bank has sent since. Bailing
+      // out here made pull-to-refresh do nothing whatsoever once the allowance
+      // was spent, which looks exactly like an app that is broken.
+      if (!r.ok) {
+        await Promise.all([refreshBankBalance(), importBankTransactions()]);
+        return {
+          ok:          false,
+          code:        queued?.code || (r.status === 429 ? "daily_limit" : "error"),
+          availableAt: queued?.availableAt || null,
+        };
+      }
     } catch {
+      await Promise.all([refreshBankBalance(), importBankTransactions()]);
       return { ok: false, code: "offline" };
     }
 

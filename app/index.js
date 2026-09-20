@@ -441,7 +441,7 @@ function SetupChecklist({ state, router, colors, bankConnected }) {
 // Shown to friends and family testing the app: the daily bank refresh is an
 // early-access limit from our data provider, not the finished product.
 const TESTING_NOTE =
-  "Testing build: one bank refresh a day. We're working towards near-live updates and unlimited refreshes for launch.";
+  "Testing build: one bank refresh every 24 hours. We're working towards near-live updates and unlimited refreshes for launch.";
 
 export default function Home() {
   const router  = useRouter();
@@ -469,7 +469,11 @@ export default function Home() {
       await Promise.all([refreshBankBalance(), importBankTransactions()]);
     }
     if (res.code === "daily_limit") {
-      setRefreshNote(TESTING_NOTE);
+      const at = res.availableAt ? new Date(res.availableAt) : null;
+      const when = at && !Number.isNaN(at.getTime())
+        ? at.toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" })
+        : null;
+      setRefreshNote(TESTING_NOTE + (when ? ` The next one is available from ${when}.` : ""));
     } else if (res.code === "refresh_failed") {
       setRefreshNote("Your bank didn't answer that request. Your next automatic update still arrives as usual.");
     } else if (res.code === "still_working") {
