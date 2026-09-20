@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "782812689834",
-    "project_id": "envelope-mobile",
-    "storage_bucket": "envelope-mobile.firebasestorage.app"
+    "project_number": "18221160340",
+    "project_id": "app-tend-budget",
+    "storage_bucket": "app-tend-budget.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:782812689834:android:6c928ba09ec8e8f59767d3",
+        "mobilesdk_app_id": "1:18221160340:android:ef44567663b7aa6d3ba181",
         "android_client_info": {
           "package_name": "app.tend.budget"
         }
@@ -15,7 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyBBDAbj2m6RLEH3spUhXQQMAf4aKGgIB2Y"
+          "current_key": "AIzaSyDocDNeIN1Y5VfMDIz8CXUf1pWcGrUd5TI"
         }
       ],
       "services": {
