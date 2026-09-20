@@ -90,9 +90,9 @@ function reducer(state, action) {
           }))
         : state.envelopes;
 
-      const transactions = Array.isArray(incoming.transactions)
-        ? incoming.transactions
-        : state.transactions;
+      const transactions = repairImportedDates(
+        Array.isArray(incoming.transactions) ? incoming.transactions : state.transactions
+      );
 
       const rules = Array.isArray(incoming.rules) ? incoming.rules : state.rules;
 
@@ -382,6 +382,35 @@ function pickCloudPersisted(stateLike) {
   // database, and that has to be true of the balance as well.
   for (const k of BANK_LOCAL_FIELDS) delete cloud[k];
   return cloud;
+}
+
+/**
+ * Put the real date back on transactions imported before the date was read.
+ *
+ * Fiskil sends no posted date — only an execution time — and the backend did
+ * not read it, so imported rows arrived dateless and the app filled the gap
+ * with "now". Whole histories ended up stamped with the moment they were
+ * imported, which is why everything looked like it happened on the same day.
+ *
+ * Only imported rows are touched, and only where the bank's own execution time
+ * is known: for those there was never anything in postedAt but that stamp.
+ * Manual entries keep the date the person chose. Nothing else is altered — the
+ * `historical` verdict was stamped at import and stays as it is, so repairing a
+ * date can never turn settled spending back into something to sort out.
+ *
+ * Safe to run on every load: once repaired the two values match, so it stops
+ * changing anything.
+ */
+function repairImportedDates(txs) {
+  if (!Array.isArray(txs)) return txs;
+  let changed = false;
+  const repaired = txs.map((t) => {
+    if (!t?.imported || !t.executedAt || t.postedAt === t.executedAt) return t;
+    if (!Number.isFinite(Date.parse(t.executedAt))) return t;
+    changed = true;
+    return { ...t, postedAt: t.executedAt };
+  });
+  return changed ? repaired : txs;
 }
 
 // Normalise any transaction-ish object (backend, webhook, or legacy shape)
