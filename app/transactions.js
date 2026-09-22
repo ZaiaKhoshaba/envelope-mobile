@@ -14,21 +14,9 @@ import { useBudget } from "../context/BudgetContext";
 import { usePurchase } from "../context/PurchaseContext";
 import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
 import { fmt } from "../lib/format";
-
-// A bank transaction counts as history only if it happened before the bank was
-// connected. Everything since is live spending the user is meant to allocate.
-function isHistoricalTx(t, bankConnectedAt) {
-  if (!t.imported) return false;                    // typed in by hand — never "imported"
-  if (typeof t.historical === "boolean") return t.historical; // stamped at import — authoritative
-  // Fallback for transactions imported before the flag existed.
-  if (!bankConnectedAt) return false;
-  const when = t.postedAt || t.createdAt;
-  if (!when) return false;
-  const at = Date.parse(when);
-  const connected = Date.parse(bankConnectedAt);
-  if (Number.isNaN(at) || Number.isNaN(connected)) return false;
-  return at < connected;
-}
+// Shared with the home screen, so its "Spending to sort" total always matches
+// this list.
+import { isHistoricalTx } from "../lib/budgetMath";
 
 // ── Status pill ───────────────────────────────────────────────────────────────
 
@@ -62,7 +50,7 @@ function StatusPill({ historical, isIncome, isSpend, allocated, isTransfer, colo
 
 function TxCard({
   t, onAllocate, envelopes, colors, bankConnectedAt,
-  selectMode, isSelected, onToggleSelect, onEnterSelect, onAccountedFor,
+  selectMode, isSelected, onToggleSelect, onEnterSelect,
 }) {
   // A transfer between the user's own accounts. Only the outgoing leg is shown
   // — the matching incoming leg is filtered out of the list, so the same $20
@@ -201,26 +189,19 @@ function TxCard({
         </>
       )}
 
-      {/* Allocate button for outstanding spends — including ones from the bank */}
+      {/* Allocate button for outstanding spends — including ones from the bank.
+          There is deliberately no way to wave a new spend through: money that
+          left the bank after connecting has to come out of an envelope, or the
+          envelopes stop matching the bank. Spending from before connecting is
+          filed as history automatically, so it never asks. */}
       {isSpend && !isHistorical && !isAllocated && !selectMode && (
-        <>
-          <TouchableOpacity
-            style={[txcard.allocBtn, { backgroundColor: colors.accent }]}
-            onPress={() => onAllocate(t)}
-            activeOpacity={0.8}
-          >
-            <Text style={txcard.allocBtnText}>Allocate to envelope →</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => onAccountedFor?.(t.id)}
-            activeOpacity={0.7}
-            style={{ alignSelf: "center", paddingVertical: spacing.sm }}
-          >
-            <Text style={{ color: colors.textMuted, fontSize: typography.xs, fontWeight: typography.semibold }}>
-              Already accounted for
-            </Text>
-          </TouchableOpacity>
-        </>
+        <TouchableOpacity
+          style={[txcard.allocBtn, { backgroundColor: colors.accent }]}
+          onPress={() => onAllocate(t)}
+          activeOpacity={0.8}
+        >
+          <Text style={txcard.allocBtnText}>Allocate to envelope →</Text>
+        </TouchableOpacity>
       )}
 
       {/* Long-press is invisible on its own, so say it once, on the first
@@ -238,7 +219,7 @@ function TxCard({
 
 export default function TransactionsScreen() {
   const {
-    state, allocateOutstanding, allocateMany, fundEnvelopeFromTransfer, markAccountedFor,
+    state, allocateOutstanding, allocateMany, fundEnvelopeFromTransfer,
     unallocated, importBankTransactions, bankConnectedAt,
   } = useBudget();
   const { hasBankAccess } = usePurchase();
@@ -345,11 +326,6 @@ export default function TransactionsScreen() {
   }, []);
   useEffect(() => () => toastTimer.current && clearTimeout(toastTimer.current), []);
 
-  const accountForOne = useCallback((id) => {
-    const res = markAccountedFor([id]);
-    if (res?.message) showToast(res.message, !!res.ok);
-  }, [markAccountedFor, showToast]);
-
   const openChooser  = useCallback(tx => setChooserForTx(tx), []);
   const closeChooser = useCallback(() => setChooserForTx(null), []);
 
@@ -402,9 +378,8 @@ export default function TransactionsScreen() {
       isSelected={selected.has(String(t.id))}
       onToggleSelect={toggleSelect}
       onEnterSelect={enterSelect}
-      onAccountedFor={accountForOne}
     />
-  ), [openChooser, state.envelopes, colors, bankConnectedAt, selectMode, selected, toggleSelect, enterSelect, accountForOne]);
+  ), [openChooser, state.envelopes, colors, bankConnectedAt, selectMode, selected, toggleSelect, enterSelect]);
 
   return (
     <SafeAreaView style={s.screen}>
@@ -527,24 +502,6 @@ export default function TransactionsScreen() {
       {/* ── Bulk action bar ── */}
       {selectMode && (
         <View style={[bulk.bar, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
-          {/* For spending that was already taken out of the balance you divided
-              into envelopes — files it as history without touching any envelope,
-              instead of the draw-out-and-put-back round trip. */}
-          <TouchableOpacity
-            style={{ alignItems: "center", paddingVertical: spacing.sm, marginBottom: spacing.xs, opacity: selected.size ? 1 : 0.4 }}
-            onPress={() => {
-              if (!selected.size) return;
-              const res = markAccountedFor([...selected]);
-              exitSelect();
-              if (res?.message) showToast(res.message, !!res.ok);
-            }}
-            disabled={!selected.size}
-            activeOpacity={0.7}
-          >
-            <Text style={{ color: colors.textSecondary, fontSize: typography.sm, fontWeight: typography.semibold }}>
-              Already accounted for — don't touch my envelopes
-            </Text>
-          </TouchableOpacity>
           <TouchableOpacity
             style={[bulk.btn, {
               backgroundColor: selected.size ? colors.accent : colors.cardAlt,

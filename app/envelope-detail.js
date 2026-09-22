@@ -15,7 +15,6 @@ import {
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useBudget } from "../context/BudgetContext";
-import { usePurchase } from "../context/PurchaseContext";
 import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
 import * as Haptics from "expo-haptics";
 import { fmt } from "../lib/format";
@@ -57,7 +56,7 @@ function TxRow({ t, envId, colors }) {
 
 // ── Single envelope page content ──────────────────────────────────────────────
 
-function EnvelopeContent({ env, state, deleteEnvelope, hasBankAccess, colors, s, router }) {
+function EnvelopeContent({ env, state, deleteEnvelope, bankConnected, colors, s, router }) {
   const [activeTab, setActiveTab] = useState("transactions");
 
   const isFixed   = env.type === "fixed";
@@ -260,7 +259,9 @@ function EnvelopeContent({ env, state, deleteEnvelope, hasBankAccess, colors, s,
           <Text style={[qa.label, { color: colors.accent }]}>Transfer</Text>
         </TouchableOpacity>
 
-        {hasBankAccess ? (
+        {/* With a bank connected, every spend arrives from the bank; adding one
+            by hand as well would take it out of an envelope twice. */}
+        {bankConnected ? (
           <TouchableOpacity
             style={[qa.btn, { backgroundColor: colors.cardAlt, borderColor: colors.border }]}
             onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push("/transactions"); }}
@@ -331,8 +332,7 @@ function EnvelopeContent({ env, state, deleteEnvelope, hasBankAccess, colors, s,
 export default function EnvelopeDetailScreen() {
   const router = useRouter();
   const { id }  = useLocalSearchParams();
-  const { state, deleteEnvelope } = useBudget();
-  const { hasBankAccess } = usePurchase();
+  const { state, deleteEnvelope, bankBalance } = useBudget();
   const { colors } = useTheme();
   const s = makeStyles(colors);
   // Reactive to the current window size — a one-time Dimensions.get() snapshot
@@ -412,7 +412,7 @@ export default function EnvelopeDetailScreen() {
               env={env}
               state={state}
               deleteEnvelope={deleteEnvelope}
-              hasBankAccess={hasBankAccess}
+              bankConnected={bankBalance != null}
               colors={colors}
               s={s}
               router={router}

@@ -16,7 +16,7 @@ import { useBudget, buildProportionalPlans } from "../context/BudgetContext";
 import { useAuth } from "../context/AuthContext";
 import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
 import * as Haptics from "expo-haptics";
-import { getEnvelopeDueDate, projectedIncomeBeforeDate } from "../lib/budgetMath";
+import { getEnvelopeDueDate, projectedIncomeBeforeDate, unsortedSpending } from "../lib/budgetMath";
 import { fmt } from "../lib/format";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -166,21 +166,47 @@ function EnvelopePreviewRow({ env, colors, analysis }) {
 // Shown when envelopes hold more money than actually exists — the single most
 // important signal in envelope budgeting. Never hide this.
 
-function OverallocatedWarning({ amount, onPress, colors }) {
-  if (!amount || amount <= 0) return null;
+// Two different things make envelopes hold more than the bank, and they need
+// opposite actions, so they get different words. Almost always it's spending
+// that has left the bank but not yet been taken OUT of an envelope — "Spending
+// to sort", which goes straight to those transactions. Only when nothing is
+// waiting to be sorted do the envelopes genuinely hold more than there is.
+// (Putting money INTO an envelope, even past its target, is never a warning.)
+function GapWarning({ gap, toSort, onSort, onEnvelopes, colors }) {
+  if (toSort?.total > 0) {
+    return (
+      <TouchableOpacity
+        style={[nudge.wrap, { backgroundColor: colors.warningBg, borderColor: colors.warning }]}
+        onPress={onSort}
+        activeOpacity={0.8}
+      >
+        <Text style={nudge.icon}>🧾</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={[nudge.title, { color: colors.warning }]}>
+            Spending to sort: ${fmt(toSort.total)}
+          </Text>
+          <Text style={[nudge.sub, { color: colors.warning }]}>
+            {toSort.count === 1 ? "1 purchase has" : `${toSort.count} purchases have`} left your bank but not yet come out of an envelope.
+          </Text>
+        </View>
+        <Text style={[nudge.arrow, { color: colors.warning }]}>›</Text>
+      </TouchableOpacity>
+    );
+  }
+  if (!gap || gap <= 0) return null;
   return (
     <TouchableOpacity
       style={[nudge.wrap, { backgroundColor: colors.dangerBg, borderColor: colors.danger }]}
-      onPress={onPress}
+      onPress={onEnvelopes}
       activeOpacity={0.8}
     >
       <Text style={nudge.icon}>🚨</Text>
       <View style={{ flex: 1 }}>
         <Text style={[nudge.title, { color: colors.danger }]}>
-          Budgeted ${fmt(amount)} more than you have
+          Your envelopes hold ${fmt(gap)} more than your bank
         </Text>
         <Text style={[nudge.sub, { color: colors.danger }]}>
-          Your envelopes hold money that isn't in your balance. Move funds out or add income.
+          Take money out of an envelope so they match what's in your bank.
         </Text>
       </View>
       <Text style={[nudge.arrow, { color: colors.danger }]}>›</Text>
@@ -201,10 +227,10 @@ function UnallocatedNudge({ amount, onPress, colors }) {
       <Text style={nudge.icon}>💡</Text>
       <View style={{ flex: 1 }}>
         <Text style={[nudge.title, { color: colors.accent }]}>
-          ${fmt(amount)} sitting idle
+          ${fmt(amount)} ready to allocate
         </Text>
         <Text style={[nudge.sub, { color: colors.accent }]}>
-          Assign it to an envelope so every dollar has a job
+          Put it into an envelope so every dollar has a job
         </Text>
       </View>
       <Text style={[nudge.arrow, { color: colors.accent }]}>›</Text>
@@ -438,6 +464,16 @@ function SetupChecklist({ state, router, colors, bankConnected }) {
 
 // ── Main screen ───────────────────────────────────────────────────────────────
 
+// "8:40am" for today, "Mon 8:40am" for any other day.
+function whenShort(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "last";
+  const time = d.toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" })
+    .replace(/\s/g, "").toLowerCase();
+  if (d.toDateString() === new Date().toDateString()) return time;
+  return `${d.toLocaleDateString("en-AU", { weekday: "short" })} ${time}`;
+}
+
 // Shown to friends and family testing the app: the daily bank refresh is an
 // early-access limit from our data provider, not the finished product.
 const TESTING_NOTE =
@@ -446,7 +482,7 @@ const TESTING_NOTE =
 export default function Home() {
   const router  = useRouter();
   const { colors, isDark, toggle } = useTheme();
-  const { total, allocated, unallocated, overallocated, state, bankBalance, lastBalanceSync, balanceAsOf, refreshBankBalance, requestBankRefresh, importBankTransactions } = useBudget();
+  const { total, allocated, unallocated, overallocated, state, bankBalance, lastBalanceSync, balanceAsOf, balanceDetail, bankConnectedAt, refreshBankBalance, requestBankRefresh, importBankTransactions } = useBudget();
   const { isAuthenticated, loading, user } = useAuth();
 
   useEffect(() => {
@@ -520,6 +556,11 @@ export default function Home() {
 
   const allocatedPct = total > 0 ? Math.round((allocated / total) * 100) : 0;
 
+  // Spending that has left the bank but not yet come out of an envelope — the
+  // same rule the transactions list uses, so the two always agree.
+  const toSort        = unsortedSpending(state?.transactions, bankConnectedAt);
+  const bankConnected = bankBalance != null;
+
   // Use firstName field if available (new accounts), fall back to splitting display name
   const firstName = user?.firstName || (user?.name ? user.name.split(" ")[0] : null);
 
@@ -585,9 +626,18 @@ export default function Home() {
                 : /* Age of the BANK's figure, not of our request. Asking again does
                      not make the bank's data newer, so reporting our fetch time
                      made stale CDR data look current. */
-                  `Your bank last updated this ${timeAgo(
+                  `Updated ${timeAgo(
                     balanceAsOf ? Date.parse(balanceAsOf) : lastBalanceSync
                   )} · pull down to check again`}
+            </Text>
+          )}
+          {/* The bank's own balance only refreshes twice a day, and a manual
+              refresh brings transactions but not the balance. So the figure
+              above is the bank's last balance brought forward by everything
+              since — say so, rather than pass a calculation off as the bank's. */}
+          {bankBalance != null && !refreshing && balanceDetail?.sinceCount > 0 && balanceDetail?.syncedAt && (
+            <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: typography.xs, marginBottom: 2 }}>
+              {`Includes ${balanceDetail.sinceCount} transaction${balanceDetail.sinceCount === 1 ? "" : "s"} since your bank's ${whenShort(balanceDetail.syncedAt)} balance`}
             </Text>
           )}
           <View style={styles.heroBarTrack}>
@@ -615,21 +665,25 @@ export default function Home() {
             value={`$${fmt(allocated)}`}
             valueColor={colors.accent}
           />
+          {/* Money with no job yet. Never shown negative: when envelopes hold
+              more than the bank, the banner below says why in plain words. */}
           <SummaryCard
-            label="Unallocated"
-            value={`$${fmt(unallocated)}`}
+            label="Ready to allocate"
+            value={`$${fmt(Math.max(unallocated, 0))}`}
             valueColor={
-              unallocated < 0   ? colors.danger   // overspent → red
-            : unallocated === 0 ? colors.success  // fully assigned → green ✓
-            :                     colors.warning  // idle money → amber, needs action
+              unallocated < 0   ? colors.danger   // envelopes exceed the bank → see banner
+            : unallocated === 0 ? colors.success  // every dollar has a job ✓
+            :                     colors.warning  // money waiting for a job
             }
           />
         </View>
 
-        {/* ── Overallocated warning — never hidden ── */}
-        <OverallocatedWarning
-          amount={overallocated}
-          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push("/envelopes"); }}
+        {/* ── Spending to sort / envelopes exceed the bank — never hidden ── */}
+        <GapWarning
+          gap={overallocated}
+          toSort={toSort}
+          onSort={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push("/transactions"); }}
+          onEnvelopes={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push("/envelopes"); }}
           colors={colors}
         />
 
@@ -659,7 +713,11 @@ export default function Home() {
           <Text style={[s.sectionTitle, { marginTop: 0, marginBottom: spacing.md }]}>Quick actions</Text>
           <View style={styles.qaGrid}>
             <QuickActionBtn icon="💰" label="Add income" onPress={() => router.push("/add-income")} />
-            <QuickActionBtn icon="💸" label="Add spend"  onPress={() => router.push("/add-spend")} />
+            {/* With a bank connected, every spend arrives from the bank — adding
+                one by hand as well would take it out of an envelope twice. */}
+            {!bankConnected && (
+              <QuickActionBtn icon="💸" label="Add spend"  onPress={() => router.push("/add-spend")} />
+            )}
             <QuickActionBtn   icon="✉️" label="New envelope" onPress={() => router.push("/new-envelope")} />
             <QuickActionBtn   icon="📅" label="Pay schedule" onPress={() => router.push("/income-schedule")} />
             <QuickActionBtn   icon="🔄" label="Cycle"        onPress={() => router.push("/cycle")} />

@@ -90,8 +90,14 @@ function reducer(state, action) {
           }))
         : state.envelopes;
 
-      const transactions = repairImportedDates(
-        Array.isArray(incoming.transactions) ? incoming.transactions : state.transactions
+      const connectedAt = incoming.bankConnectedAt !== undefined
+        ? incoming.bankConnectedAt
+        : state.bankConnectedAt;
+      const transactions = settleHistory(
+        repairImportedDates(
+          Array.isArray(incoming.transactions) ? incoming.transactions : state.transactions
+        ),
+        connectedAt
       );
 
       const rules = Array.isArray(incoming.rules) ? incoming.rules : state.rules;
@@ -221,6 +227,7 @@ function reducer(state, action) {
           ? null
           : (state.bankConnectedAt || new Date().toISOString()),
         balanceAsOf:      action.balanceAsOf ?? null,
+        balanceDetail:    action.balanceDetail ?? null,
       };
 
     case "SET_BANK_CONNECTED_AT":
@@ -352,6 +359,7 @@ function autoAllocateIncome({ incomeAmount, envelopes }) {
 // refresh triggers, which are gated on a balance being present, actually fire.
 const BANK_LOCAL_FIELDS = [
   "bankBalance", "lastBalanceSync", "balanceAsOf", "bankAccountCount", "bankConnectedAt",
+  "balanceDetail",
 ];
 
 function pickPersisted(state) {
@@ -411,6 +419,43 @@ function repairImportedDates(txs) {
     return { ...t, postedAt: t.executedAt };
   });
   return changed ? repaired : txs;
+}
+
+/**
+ * Apply the one rule for bank spending, to transactions already stored.
+ *
+ * Everything that left the bank before it was connected is already accounted
+ * for — it was out of the balance the user divided into envelopes. Everything
+ * after has to come out of an envelope, or the envelopes stop matching the bank.
+ *
+ * That rule is applied automatically at import, but two kinds of stored rows
+ * break it and are put right here:
+ *   - from BEFORE the connection, yet still waiting to be sorted — imported
+ *     before the automatic rule existed. Filed as history.
+ *   - from AFTER the connection, yet waved through with the old "Already
+ *     accounted for" button (now removed). Those never came out of an envelope,
+ *     so the envelopes overstate what is in the bank. Back to sorting.
+ *
+ * Allocated rows and transfers between the user's own accounts are never
+ * touched. Safe on every load: once put right, nothing matches again.
+ */
+function settleHistory(txs, connectedAt) {
+  if (!Array.isArray(txs) || !connectedAt) return txs;
+  let changed = false;
+  const settled = txs.map((t) => {
+    if (!t?.imported || t.allocated || t.transfer || t.kind === "transfer") return t;
+    const before = isBeforeConnection(t, connectedAt);
+    if (before && t.historical !== true) {
+      changed = true;
+      return { ...t, historical: true };
+    }
+    if (!before && t.accountedFor) {
+      changed = true;
+      return { ...t, historical: false, accountedFor: false };
+    }
+    return t;
+  });
+  return changed ? settled : txs;
 }
 
 // Normalise any transaction-ish object (backend, webhook, or legacy shape)
@@ -662,7 +707,7 @@ export function BudgetProvider({ children }) {
   }, [state.envelopes, state.transactions, state.bankBalance, recomputeTotals]);
 
   // Set (or clear) the live bank balance. Passing null reverts to manual mode.
-  const setBankBalance = useCallback((amount, accountCount, asOf) => {
+  const setBankBalance = useCallback((amount, accountCount, asOf, detail) => {
     dispatch({
       type:             "SET_BANK_BALANCE",
       bankBalance:      amount == null ? null : Number(amount),
@@ -671,6 +716,9 @@ export function BudgetProvider({ children }) {
       // When the BANK last updated the figure. lastBalanceSync is only when we
       // asked; showing that as the age makes stale CDR data look current.
       balanceAsOf:      amount == null ? null : (asOf || null),
+      // How the figure was brought forward from the bank's last balance: the
+      // bank's own figure, when it was taken, and the transactions added since.
+      balanceDetail:    amount == null ? null : (detail || null),
     });
   }, []);
 
@@ -689,7 +737,13 @@ export function BudgetProvider({ children }) {
       if (r.status === 401) { await authExpiredRef.current?.(); return; }
       if (r.ok) {
         const j = await r.json();
-        if (typeof j.balance === "number") setBankBalance(j.balance, j.accountCount, j.asOf);
+        if (typeof j.balance === "number") {
+          const detail = typeof j.sinceCount === "number"
+            ? { bankBalance: j.bankBalance, syncedAt: j.balanceSyncedAt || null,
+                sinceCount: j.sinceCount, sinceTotal: j.sinceTotal }
+            : null;
+          setBankBalance(j.balance, j.accountCount, j.asOf, detail);
+        }
       }
     } catch { /* offline — keep last known balance */ }
   }, [setBankBalance]);
@@ -801,31 +855,6 @@ export function BudgetProvider({ children }) {
     },
     [state.envelopes, state.transactions, state.rules]
   );
-
-  /**
-   * Mark spending as already accounted for — no envelope is touched.
-   *
-   * For a purchase that was already taken out of the balance the user divided
-   * into envelopes. Allocating it would draw the same money out a second time,
-   * park it in Unallocated, and force the user to put it straight back. This
-   * files it as history instead, which is what it actually is.
-   */
-  const markAccountedFor = useCallback((txIds) => {
-    const ids = new Set((txIds || []).map(String));
-    if (!ids.size) return { ok: false, count: 0, message: "Nothing selected." };
-    let count = 0;
-    const transactions = state.transactions.map((t) => {
-      if (!ids.has(String(t.id)) || t.allocated) return t;
-      count++;
-      return { ...t, historical: true, accountedFor: true };
-    });
-    if (!count) return { ok: false, count: 0, message: "Nothing to mark." };
-    dispatch({ type: "SET_TRANSACTIONS", transactions });
-    return {
-      ok: true, count,
-      message: `${count} marked as already accounted for — no envelopes changed`,
-    };
-  }, [state.transactions]);
 
   /**
    * Apply a transfer between the user's own accounts to an envelope.
@@ -1434,7 +1463,6 @@ export function BudgetProvider({ children }) {
       allocateOutstanding,
       allocateMany,
       fundEnvelopeFromTransfer,
-      markAccountedFor,
       deleteEnvelope,
       reorderEnvelopes,
       editEnvelope,
@@ -1451,6 +1479,7 @@ export function BudgetProvider({ children }) {
       bankAccountCount: state.bankAccountCount,
       bankConnectedAt: state.bankConnectedAt,
       balanceAsOf: state.balanceAsOf,
+      balanceDetail: state.balanceDetail,
       setBankBalance,
       refreshBankBalance,
       requestBankRefresh,
@@ -1481,7 +1510,6 @@ export function BudgetProvider({ children }) {
       allocateOutstanding,
       allocateMany,
       fundEnvelopeFromTransfer,
-      markAccountedFor,
       deleteEnvelope,
       reorderEnvelopes,
       editEnvelope,
