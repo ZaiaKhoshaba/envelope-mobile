@@ -712,7 +712,12 @@ export default function Home() {
         <View>
           <Text style={[s.sectionTitle, { marginTop: 0, marginBottom: spacing.md }]}>Quick actions</Text>
           <View style={styles.qaGrid}>
-            <QuickActionBtn icon="💰" label="Add income" onPress={() => router.push("/add-income")} />
+            {/* Income arrives from the bank on its own, and is already in the
+                balance as ready to allocate. Typing it in as well would record
+                the same pay twice — the bank's own row does the split. */}
+            {!bankConnected && (
+              <QuickActionBtn icon="💰" label="Add income" onPress={() => router.push("/add-income")} />
+            )}
             {/* With a bank connected, every spend arrives from the bank — adding
                 one by hand as well would take it out of an envelope twice. */}
             {!bankConnected && (
