@@ -50,7 +50,7 @@ function StatusPill({ historical, isIncome, isSpend, allocated, isTransfer, colo
 
 function TxCard({
   t, onAllocate, envelopes, colors, bankConnectedAt,
-  selectMode, isSelected, onToggleSelect, onEnterSelect,
+  selectMode, isSelected, onToggleSelect, onEnterSelect, onSplitPay,
 }) {
   // A transfer between the user's own accounts. Only the outgoing leg is shown
   // — the matching incoming leg is filtered out of the list, so the same $20
@@ -189,6 +189,27 @@ function TxCard({
         </>
       )}
 
+      {/* Pay that has landed in the bank. Nothing to record — the balance
+          already includes it and it is sitting in "Ready to allocate" — so this
+          only spreads it across the envelopes, in one tap instead of one per
+          envelope. Money from before the bank was connected is history and
+          isn't offered. */}
+      {isIncome && t.imported && !isHistorical && !isAllocated && !selectMode && (
+        <TouchableOpacity
+          style={[txcard.allocBtn, { backgroundColor: colors.success }]}
+          onPress={() => onSplitPay?.(t.id)}
+          activeOpacity={0.8}
+        >
+          <Text style={txcard.allocBtnText}>Split this pay across envelopes →</Text>
+        </TouchableOpacity>
+      )}
+
+      {isIncome && isAllocated && !selectMode && (
+        <Text style={[txcard.remaining, { color: colors.textMuted, marginTop: spacing.xs }]}>
+          Already spread across your envelopes.
+        </Text>
+      )}
+
       {/* Allocate button for outstanding spends — including ones from the bank.
           There is deliberately no way to wave a new spend through: money that
           left the bank after connecting has to come out of an envelope, or the
@@ -219,7 +240,7 @@ function TxCard({
 
 export default function TransactionsScreen() {
   const {
-    state, allocateOutstanding, allocateMany, fundEnvelopeFromTransfer,
+    state, allocateOutstanding, allocateMany, fundEnvelopeFromTransfer, splitPayIntoEnvelopes,
     unallocated, importBankTransactions, bankConnectedAt,
   } = useBudget();
   const { hasBankAccess } = usePurchase();
@@ -326,6 +347,11 @@ export default function TransactionsScreen() {
   }, []);
   useEffect(() => () => toastTimer.current && clearTimeout(toastTimer.current), []);
 
+  const splitPay = useCallback((id) => {
+    const res = splitPayIntoEnvelopes(id);
+    if (res?.message) showToast(res.message, !!res.ok);
+  }, [splitPayIntoEnvelopes, showToast]);
+
   const openChooser  = useCallback(tx => setChooserForTx(tx), []);
   const closeChooser = useCallback(() => setChooserForTx(null), []);
 
@@ -378,8 +404,9 @@ export default function TransactionsScreen() {
       isSelected={selected.has(String(t.id))}
       onToggleSelect={toggleSelect}
       onEnterSelect={enterSelect}
+      onSplitPay={splitPay}
     />
-  ), [openChooser, state.envelopes, colors, bankConnectedAt, selectMode, selected, toggleSelect, enterSelect]);
+  ), [openChooser, state.envelopes, colors, bankConnectedAt, selectMode, selected, toggleSelect, enterSelect, splitPay]);
 
   return (
     <SafeAreaView style={s.screen}>

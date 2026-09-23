@@ -891,6 +891,54 @@ export function BudgetProvider({ children }) {
   );
 
   /**
+   * Spread a pay that has already arrived across the envelopes.
+   *
+   * Money from the bank needs no recording: the balance already includes it and
+   * it is already sitting there as ready to allocate. This does only the
+   * distribution — the same proportional split adding income by hand performs —
+   * so nobody has to fill envelope after envelope themselves.
+   *
+   * Capped at what is genuinely free. Splitting the full pay when some of it has
+   * already been allocated would put money into envelopes that the bank doesn't
+   * have, which is precisely what envelopes are meant to make impossible.
+   */
+  const splitPayIntoEnvelopes = useCallback((txId) => {
+    const tx = state.transactions.find((t) => String(t.id) === String(txId));
+    if (!tx) return { ok: false, message: "That transaction is no longer here." };
+    if (tx.allocated) return { ok: false, message: "That pay has already been split." };
+
+    const pay    = round2(Math.abs(Number(tx.amount) || 0));
+    const free   = round2(Number(state.unallocated) || 0);
+    const amount = round2(Math.min(pay, free));
+    if (amount <= 0) {
+      return { ok: false, message: "There's nothing ready to allocate right now." };
+    }
+
+    const { envelopes: updatedEnvelopes } = autoAllocateIncome({
+      incomeAmount: amount,
+      envelopes:    state.envelopes,
+    });
+    const sum   = (list) => list.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+    const moved = round2(sum(updatedEnvelopes) - sum(state.envelopes));
+    if (moved <= 0) {
+      return { ok: false, message: "No envelope is set up to take a share of your pay." };
+    }
+
+    const transactions = state.transactions.map((t) =>
+      String(t.id) === String(txId)
+        ? { ...t, allocated: true, splitAt: new Date().toISOString() }
+        : t
+    );
+    dispatch({ type: "ALLOCATE", envelopes: updatedEnvelopes, transactions });
+    return {
+      ok: true,
+      message: amount < pay
+        ? `$${fmt(moved)} spread across your envelopes — the rest of this pay was already allocated`
+        : `$${fmt(moved)} spread across your envelopes`,
+    };
+  }, [state.transactions, state.envelopes, state.unallocated]);
+
+  /**
    * Allocate several transactions to one envelope in a single pass.
    *
    * Doing this one at a time meant a week of spending was a week of taps, which
@@ -1463,6 +1511,7 @@ export function BudgetProvider({ children }) {
       allocateOutstanding,
       allocateMany,
       fundEnvelopeFromTransfer,
+      splitPayIntoEnvelopes,
       deleteEnvelope,
       reorderEnvelopes,
       editEnvelope,
@@ -1510,6 +1559,7 @@ export function BudgetProvider({ children }) {
       allocateOutstanding,
       allocateMany,
       fundEnvelopeFromTransfer,
+      splitPayIntoEnvelopes,
       deleteEnvelope,
       reorderEnvelopes,
       editEnvelope,
