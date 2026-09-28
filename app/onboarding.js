@@ -117,18 +117,35 @@ function StepDots({ count, current, colors }) {
 
 function Slide({ slide, index, count, colors, base, onGeo, renderScene }) {
   const scrollRef = useRef(null);
+  // On a short phone the illustration ended up half-hidden behind the button.
+  // The picture is the point of the slide, so the chrome around it gives way
+  // first: a smaller circle, tighter gaps, less padding at the top.
+  const { height } = useWindowDimensions();
+  const compact    = height < 760;
+  const circle     = compact ? 76 : 100;
+
   return (
     <ScrollView
       ref={scrollRef}
       style={s.fill}
-      contentContainerStyle={s.scroll}
+      contentContainerStyle={[s.scroll, compact && { paddingTop: 44, paddingBottom: spacing.md }]}
       showsVerticalScrollIndicator={false}
     >
-      <View style={s.slideWrap} onLayout={(e) => onGeo("wrap", e.nativeEvent.layout)}>
-        <PopIn delay={base} style={[s.emojiWrap, { backgroundColor: colors.accentSoft }]}>
+      <View
+        style={[s.slideWrap, compact && { gap: spacing.md }]}
+        onLayout={(e) => onGeo("wrap", e.nativeEvent.layout)}
+      >
+        <PopIn
+          delay={base}
+          style={[s.emojiWrap, {
+            backgroundColor: colors.accentSoft,
+            width: circle, height: circle, borderRadius: circle / 2,
+            marginBottom: compact ? 0 : spacing.sm,
+          }]}
+        >
           {slide.key === "welcome"
-            ? <WavingHand delay={base + 500} style={s.emoji} />
-            : <Text style={s.emoji}>{slide.emoji}</Text>}
+            ? <WavingHand delay={base + 500} style={[s.emoji, compact && { fontSize: 38 }]} />
+            : <Text style={[s.emoji, compact && { fontSize: 38 }]}>{slide.emoji}</Text>}
         </PopIn>
 
         <StepDots count={count} current={index} colors={colors} />

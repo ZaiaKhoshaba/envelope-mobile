@@ -82,6 +82,31 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  /**
+   * Check a restored session still works, once, at startup.
+   *
+   * Having a saved session says nothing about whether it is still valid —
+   * tokens last seven days. Restoring one unchecked left a phone that had been
+   * signed in months earlier sitting on a signed-in screen: the previous
+   * person's email on the profile, zeros everywhere because nothing would load,
+   * and every bank action failing with a raw "Invalid or expired token". It
+   * looked like a broken app, or worse, like someone else's account.
+   *
+   * Only an outright rejection signs anyone out. A network failure must not:
+   * being offline is not the same as being logged out, and nobody should lose
+   * their session because a train went into a tunnel.
+   */
+  const validateStoredSession = useCallback(async (storedToken) => {
+    try {
+      const r = await fetch(`${BASE_URL}/me`, {
+        headers: { Authorization: `Bearer ${storedToken}` },
+      });
+      if (r.status === 401) await clearStoredSession();
+    } catch {
+      /* offline — keep the session and check again next launch */
+    }
+  }, [clearStoredSession]);
+
   // Keep refs in sync so AppState listener always sees current auth state
   useEffect(() => { userRef.current  = user;  }, [user]);
   useEffect(() => { tokenRef.current = token; }, [token]);
@@ -115,6 +140,8 @@ export function AuthProvider({ children }) {
             setUser(parsed.user);
             setToken(parsed.token);
             if (pinOn) setIsLocked(true);
+            // Don't block the screen on this — but do find out.
+            validateStoredSession(parsed.token);
           }
         }
       } catch (e) {

@@ -6,30 +6,55 @@
 // between the back and the front.
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { memo } from "react";
+import { Dimensions } from "react-native";
 import Svg, {
   Rect, Ellipse, Circle, Path, Text as SvgText, Defs, RadialGradient, Stop,
 } from "react-native-svg";
 
-export const BILL_W = 80;
-export const BILL_H = 48;
-export const ENV_W = 96;
-export const ENV_H = 68;
-export const ENV_GAP = 16;
-export const ENV_TOP = 92;   // headroom above the envelopes for the waiting bills
-export const ROW_W = ENV_W * 3 + ENV_GAP * 2;
-export const HOVER = -66;    // how far above its slot a bill waits before dropping in
+// ── Fitting the drawing to the phone ─────────────────────────────────────────
+// Drawn at a fixed size, three envelopes plus their gaps come to 320 points.
+// A slide leaves the screen width less 48 points of padding — which is 312 on a
+// 360-point phone, so the row ran past both edges and the envelopes were cut
+// off. Everything below is therefore expressed as the natural size times how
+// much of it actually fits, so the whole scene shrinks together and the
+// proportions (and the flight paths that depend on them) still hold.
+const SLIDE_PADDING = 48;
+const NATURAL_ROW   = 96 * 3 + 16 * 2 + 8;   // three envelopes, two gaps, shadow bleed
+const screenWidth   = Dimensions.get("window").width || 0;
+// No width yet (server-rendered web) means no reason to shrink.
+const roomForRow    = screenWidth > 0 ? screenWidth - SLIDE_PADDING : NATURAL_ROW;
+export const FIT    = Math.min(1, roomForRow / NATURAL_ROW);
+const fit = (n) => Math.round(n * FIT);
+
+export const BILL_W  = fit(80);
+export const BILL_H  = fit(48);
+export const ENV_W   = fit(96);
+export const ENV_H   = fit(68);
+export const ENV_GAP = fit(16);
+export const ENV_TOP = fit(92);    // headroom above the envelopes for the waiting bills
+export const ROW_W   = ENV_W * 3 + ENV_GAP * 2;
+export const HOVER   = -fit(66);   // how far above its slot a bill waits before dropping in
+
+// The envelope's separate layers, which sit outside its 96×68 body.
+export const FLAP_OPEN_H = fit(40);
+export const FLAP_SHUT_H = fit(46);
+export const SHADOW_W    = fit(88);
+export const SHADOW_H    = fit(16);
+export const SHADOW_LEFT = fit(4);
+export const SHADOW_TOP  = fit(60);
 
 // Where each bill sits in the welcome pile: [left, top, rotation°].
 export const PILE = [
   [8, 78, -7], [62, 82, 4], [116, 79, -3], [164, 74, 8],
   [32, 52, 9], [88, 48, -5], [140, 52, 5],
   [58, 24, -11], [112, 20, 6],
-];
-export const PILE_W = 250;
-export const PILE_H = 130;
+].map(([x, y, r]) => [fit(x), fit(y), r]);
+export const PILE_W = fit(250);
+export const PILE_H = fit(130);
 
 // Where a bill ends up inside an envelope: [centre x, centre y, rotation°].
-export const SLOTS = [[34, 10, -13], [49, 4, 3], [63, 11, 14]];
+export const SLOTS = [[34, 10, -13], [49, 4, 3], [63, 11, 14]]
+  .map(([x, y, r]) => [fit(x), fit(y), r]);
 
 // One neutral off-white paper for every envelope; the labels tell them apart.
 const PAPER = {
@@ -70,7 +95,7 @@ for (let y = 3.5; y < 40; y += 7) {
 // The flap once it's open: pointing up, showing its dotted lining.
 export const FlapInside = memo(function FlapInside() {
   return (
-    <Svg width={ENV_W} height={40} viewBox="0 0 96 40">
+    <Svg width={ENV_W} height={FLAP_OPEN_H} viewBox="0 0 96 40">
       <Path d={FLAP} fill={PAPER.flapIn} stroke={PAPER.line} strokeWidth={1} strokeLinejoin="round" />
       {FLAP_DOTS.map(([x, y]) => (
         <Circle key={`${x}-${y}`} cx={x} cy={y} r={1.35} fill={PAPER.dot} />
@@ -82,7 +107,7 @@ export const FlapInside = memo(function FlapInside() {
 // The flap while closed: pointing down over the front.
 export const FlapOutside = memo(function FlapOutside() {
   return (
-    <Svg width={ENV_W} height={46} viewBox="0 0 96 46">
+    <Svg width={ENV_W} height={FLAP_SHUT_H} viewBox="0 0 96 46">
       <Path
         d="M0.5 3.5 Q0.5 0.5 4 0.5 H92 Q95.5 0.5 95.5 3.5 L54.5 41 Q48 46 41.5 41 Z"
         fill={PAPER.light} stroke={PAPER.line} strokeWidth={1} strokeLinejoin="round"
@@ -120,7 +145,7 @@ export const EnvelopeFront = memo(function EnvelopeFront() {
 export const EnvelopeShadow = memo(function EnvelopeShadow({ isDark }) {
   const tint = isDark ? "#000000" : "#282D5A";
   return (
-    <Svg width={88} height={16} viewBox="0 0 88 16">
+    <Svg width={SHADOW_W} height={SHADOW_H} viewBox="0 0 88 16">
       <Defs>
         <RadialGradient id="tendEnvShadow" cx="50%" cy="50%" rx="50%" ry="50%" fx="50%" fy="50%">
           <Stop offset="0" stopColor={tint} stopOpacity={isDark ? 0.6 : 0.24} />

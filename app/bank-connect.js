@@ -56,7 +56,7 @@ export default function BankConnectScreen() {
   const hasImported   = txs.some((t) => t.imported);
   const hasAllocated  = txs.some((t) => t.imported && t.allocated);
   const { hasBankAccess }          = usePurchase();
-  const { token }                  = useAuth();
+  const { token, handleAuthExpired } = useAuth();
   const { colors }                 = useTheme();
   const s                          = makeStyles(colors);
 
@@ -156,6 +156,19 @@ export default function BankConnectScreen() {
         headers: authHeaders,
         body:    JSON.stringify({ redirectUri }),
       });
+      // An expired login is not a bank problem, and showing the server's own
+      // words for it ("Invalid or expired token") under a "Connection failed"
+      // heading sent people looking for a fault with their bank. Say what
+      // actually happened, and end the session so the next screen is the login.
+      if (r.status === 401) {
+        await handleAuthExpired?.();
+        Alert.alert(
+          "Please sign in again",
+          "Your session has expired, so the bank connection couldn't start. Sign in again and give it another go."
+        );
+        return;
+      }
+
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "Connection failed");
 
@@ -207,7 +220,7 @@ export default function BankConnectScreen() {
     } finally {
       setBusy(false);
     }
-  }, [authHeaders, redirectUri, refreshBalance, importBankTransactions]);
+  }, [authHeaders, redirectUri, refreshBalance, importBankTransactions, handleAuthExpired]);
 
   const onImport = useCallback(async () => {
     try {
@@ -215,8 +228,19 @@ export default function BankConnectScreen() {
       const r = await fetch(`${BACKEND_URL}/fiskil/transactions`, {
         method:  "POST",
         headers: authHeaders,
-        body:    JSON.stringify({ limit: 100 }),
+        // v:2, same as the automatic import: ask for Fiskil's real transaction
+        // ids. Without it this screen would pull the old account+amount ids and
+        // quietly reintroduce the collisions that hid new spending.
+        body:    JSON.stringify({ limit: 100, v: 2 }),
       });
+      if (r.status === 401) {
+        await handleAuthExpired?.();
+        Alert.alert(
+          "Please sign in again",
+          "Your session has expired, so nothing could be imported. Sign in again and try once more."
+        );
+        return;
+      }
       const j = await r.json();
       if (!r.ok) throw new Error(`${r.status}: ${JSON.stringify(j)}`);
 
@@ -237,7 +261,7 @@ export default function BankConnectScreen() {
     } finally {
       setBusy(false);
     }
-  }, [authHeaders, importBankTransactions, refreshBalance]);
+  }, [authHeaders, importBankTransactions, refreshBalance, handleAuthExpired]);
 
   const onDisconnect = useCallback(() => {
     Alert.alert(

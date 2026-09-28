@@ -10,6 +10,7 @@ import { useTheme, spacing, radius, typography } from "../../theme";
 import {
   Bill, billShade, FlapInside, FlapOutside, EnvelopeBack, EnvelopeFront, EnvelopeShadow,
   BILL_W, BILL_H, ENV_W, ENV_H, ENV_GAP, ENV_TOP, ROW_W, HOVER, PILE, PILE_W, PILE_H, SLOTS,
+  FLAP_OPEN_H, FLAP_SHUT_H, SHADOW_LEFT, SHADOW_TOP,
 } from "./art";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -696,9 +697,9 @@ const st = StyleSheet.create({
   envCol: { width: ENV_W, alignItems: "center" },
   env: { width: ENV_W, height: ENV_H, transformOrigin: "50% 100%" },
   layer: { position: "absolute", left: 0, top: 0, width: ENV_W, height: ENV_H },
-  envShadow: { position: "absolute", left: 4, top: 60 },
-  flapOpen: { position: "absolute", left: 0, top: -40, width: ENV_W, height: 40, transformOrigin: "50% 100%" },
-  flapClosed: { position: "absolute", left: 0, top: 0, width: ENV_W, height: 46, transformOrigin: "50% 0%" },
+  envShadow: { position: "absolute", left: SHADOW_LEFT, top: SHADOW_TOP },
+  flapOpen: { position: "absolute", left: 0, top: -FLAP_OPEN_H, width: ENV_W, height: FLAP_OPEN_H, transformOrigin: "50% 100%" },
+  flapClosed: { position: "absolute", left: 0, top: 0, width: ENV_W, height: FLAP_SHUT_H, transformOrigin: "50% 0%" },
   envLabel: { marginTop: 14, fontSize: typography.sm, fontWeight: typography.bold },
   envAmt: { marginTop: 2, fontSize: typography.sm, fontVariant: ["tabular-nums"] },
 
