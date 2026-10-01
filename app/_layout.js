@@ -10,7 +10,7 @@ import {
   Alert,
   Animated,
 } from "react-native";
-import { Tabs, useRouter } from "expo-router";
+import { Tabs, useRouter, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 
 import { Ionicons } from "@expo/vector-icons";
@@ -18,6 +18,8 @@ import * as Haptics from "expo-haptics";
 import * as LocalAuthentication from "expo-local-authentication";
 import { AuthProvider, useAuth } from "../context/AuthContext";
 import { BudgetProvider, useBudget } from "../context/BudgetContext";
+import ErrorBoundary from "../components/ErrorBoundary";
+import { installGlobalErrorHandler, setCurrentScreen, setReportingUser } from "../lib/errorReporting";
 import { PurchaseProvider, usePurchase } from "../context/PurchaseContext";
 import { ThemeProvider, useTheme, spacing, radius, typography } from "../theme";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -348,6 +350,13 @@ function InnerLayout() {
 
   usePushNotifications();
   useIdleReminder();
+  // Give crash reports a screen name and, when someone is signed in, an
+  // account to tie them to — so a report is something we can act on rather
+  // than a stack trace with no idea where or who.
+  const pathname = usePathname();
+  const { user } = useAuth();
+  useEffect(() => { setCurrentScreen(pathname); }, [pathname]);
+  useEffect(() => { setReportingUser(user?.id); }, [user?.id]);
 
   return (
     <>
@@ -464,17 +473,26 @@ function InnerLayout() {
 
 // ── Root export ───────────────────────────────────────────────────────────────
 
+// Installed once, at module load, so an error thrown before the first render
+// is still reported. Nothing below this line can be trusted to have run yet.
+installGlobalErrorHandler();
+
 export default function Layout() {
   return (
-    <ThemeProvider>
-      <AuthProvider>
-        <PurchaseProvider>
-          <BudgetProvider>
-            <InnerLayout />
-          </BudgetProvider>
-        </PurchaseProvider>
-      </AuthProvider>
-    </ThemeProvider>
+    // The boundary sits outside every provider on purpose. A provider throwing
+    // during setup is exactly the crash that takes the whole app blank, and a
+    // boundary inside them could not catch it.
+    <ErrorBoundary>
+      <ThemeProvider>
+        <AuthProvider>
+          <PurchaseProvider>
+            <BudgetProvider>
+              <InnerLayout />
+            </BudgetProvider>
+          </PurchaseProvider>
+        </AuthProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
   );
 }
 
