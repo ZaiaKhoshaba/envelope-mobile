@@ -49,7 +49,7 @@ const SLIDES = [
     key: "welcome",
     emoji: "👋",
     title: "Welcome to Tend",
-    body: "Tend is a real-time budgeting app built around one idea: every dollar you have should have a job.\n\nInstead of guessing where your money went, you'll always know exactly where it is.",
+    body: "Tend is an envelope budgeting app built around one idea: every dollar you have should have a job.\n\nInstead of guessing where your money went, you'll always know exactly where it is.",
     cta: "Show me how",
   },
   {

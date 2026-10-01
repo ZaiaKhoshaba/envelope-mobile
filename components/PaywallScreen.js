@@ -27,7 +27,7 @@ const FREE_FEATURES = [
 
 const PAID_FEATURES = [
   "Everything in free, plus:",
-  "Real-time bank account sync",
+  "Automatic bank transaction sync",
   "Spend notifications & one-tap allocation",
   "Automatic income allocation across envelopes",
 ];

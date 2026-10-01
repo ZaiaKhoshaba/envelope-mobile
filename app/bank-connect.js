@@ -122,7 +122,7 @@ export default function BankConnectScreen() {
             Bank connectivity is available on the Premium plan. Upgrade to automatically sync your transactions and allocate spends with one tap.
           </Text>
           <View style={[{ width: "100%", borderRadius: radius.lg, borderWidth: 1, backgroundColor: colors.card, borderColor: colors.border, padding: spacing.lg, marginBottom: spacing.xl }]}>
-            {["Real-time bank account sync", "Spend notifications & one-tap allocation", "Automatic income allocation"].map((f, i) => (
+            {["Automatic bank transaction sync", "Spend notifications & one-tap allocation", "Automatic income allocation"].map((f, i) => (
               <View key={i} style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: i < 2 ? spacing.sm : 0 }}>
                 <Ionicons name="checkmark-circle" size={18} color={colors.accent} />
                 <Text style={{ fontSize: typography.sm, color: colors.textPrimary, flex: 1 }}>{f}</Text>

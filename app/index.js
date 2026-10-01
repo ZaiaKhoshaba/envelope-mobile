@@ -16,6 +16,7 @@ import { useBudget, buildProportionalPlans } from "../context/BudgetContext";
 import { useAuth } from "../context/AuthContext";
 import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
 import * as Haptics from "expo-haptics";
+import { Ionicons } from "@expo/vector-icons";
 import { getEnvelopeDueDate, projectedIncomeBeforeDate, unsortedSpending } from "../lib/budgetMath";
 import { fmt } from "../lib/format";
 
@@ -90,6 +91,14 @@ function SummaryCard({ label, value, valueColor, flex = 1 }) {
 
 // ── Quick action button ───────────────────────────────────────────────────────
 
+// These used to be emoji. Apple's emoji glyphs carry a little blank space on
+// their right-hand side, so every one of them sat a few points left of centre
+// on iPhone no matter how the tile was laid out — the box was centred, the
+// drawing inside it wasn't. Line icons have no such quirk, sit dead centre,
+// take the theme's colours, and look the same on both platforms. The envelope
+// and receipt are the very icons already used for the Envelopes and
+// Transactions tabs, so the home screen now points at them in their own
+// language.
 function QuickActionBtn({ label, icon, onPress, color }) {
   const { colors } = useTheme();
   return (
@@ -101,7 +110,7 @@ function QuickActionBtn({ label, icon, onPress, color }) {
       }}
       activeOpacity={0.75}
     >
-      <Text style={styles.qaIcon}>{icon}</Text>
+      <Ionicons name={icon} size={26} color={colors.accent} />
       <Text style={[styles.qaLabel, { color: colors.textPrimary }]}>{label}</Text>
     </TouchableOpacity>
   );
@@ -476,8 +485,14 @@ function whenShort(iso) {
 
 // Shown to friends and family testing the app: the daily bank refresh is an
 // early-access limit from our data provider, not the finished product.
+// What someone sees when they pull down again and the day's refresh is gone.
+// It states the limit and nothing else: the old wording called this a testing
+// build and promised unlimited refreshes at launch, which stops being true the
+// day Tend goes on sale. It deliberately names no interval for the automatic
+// updates either — the bank decides when those arrive, so any number here
+// would be a promise Tend cannot keep.
 const TESTING_NOTE =
-  "Testing build: one bank refresh every 24 hours. We're working towards near-live updates and unlimited refreshes for launch.";
+  "You can pull in new transactions once every 24 hours. New ones also arrive on their own as your bank sends them through.";
 
 export default function Home() {
   const router  = useRouter();
@@ -716,17 +731,17 @@ export default function Home() {
                 balance as ready to allocate. Typing it in as well would record
                 the same pay twice — the bank's own row does the split. */}
             {!bankConnected && (
-              <QuickActionBtn icon="💰" label="Add income" onPress={() => router.push("/add-income")} />
+              <QuickActionBtn icon="arrow-down-circle-outline" label="Add income" onPress={() => router.push("/add-income")} />
             )}
             {/* With a bank connected, every spend arrives from the bank — adding
                 one by hand as well would take it out of an envelope twice. */}
             {!bankConnected && (
-              <QuickActionBtn icon="💸" label="Add spend"  onPress={() => router.push("/add-spend")} />
+              <QuickActionBtn icon="arrow-up-circle-outline"   label="Add spend"  onPress={() => router.push("/add-spend")} />
             )}
-            <QuickActionBtn   icon="✉️" label="New envelope" onPress={() => router.push("/new-envelope")} />
-            <QuickActionBtn   icon="📅" label="Pay schedule" onPress={() => router.push("/income-schedule")} />
-            <QuickActionBtn   icon="🔄" label="Cycle"        onPress={() => router.push("/cycle")} />
-            <QuickActionBtn   icon="🧾" label="Transactions" onPress={() => router.push("/transactions")} />
+            <QuickActionBtn   icon="mail-outline"     label="New envelope" onPress={() => router.push("/new-envelope")} />
+            <QuickActionBtn   icon="calendar-outline" label="Pay schedule" onPress={() => router.push("/income-schedule")} />
+            <QuickActionBtn   icon="sync-outline"     label="Cycle"        onPress={() => router.push("/cycle")} />
+            <QuickActionBtn   icon="receipt-outline"  label="Transactions" onPress={() => router.push("/transactions")} />
           </View>
         </View>
 
@@ -825,7 +840,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: spacing.xs,
   },
-  qaIcon:  { fontSize: 26 },
   qaLabel: { fontSize: typography.xs, fontWeight: typography.semibold, textAlign: "center" },
 
   sectionRow: {
