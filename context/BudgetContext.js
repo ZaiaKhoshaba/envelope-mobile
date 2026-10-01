@@ -236,7 +236,13 @@ function reducer(state, action) {
       return { ...state, bankConnectedAt: action.at || null };
 
     case "CLEAR_BANK_DATA":
-      // Drop bank-imported transactions and revert the top line to manual mode.
+      // Withdrawing consent has to leave no CDR data behind on the device, so
+      // this clears every bank-derived field, not just the obvious ones.
+      // balanceDetail was missed: it holds how many transactions arrived since
+      // the bank's last balance and when that was, which is bank data however
+      // small. Envelope balances are stored separately and deliberately stay —
+      // money already put into an envelope is the user's own budget, not a
+      // record of what their bank told us.
       return {
         ...state,
         transactions: (state.transactions || []).filter((t) => !t.imported),
@@ -245,6 +251,7 @@ function reducer(state, action) {
         bankAccountCount: 0,
         bankConnectedAt: null,
         balanceAsOf: null,
+        balanceDetail: null,
       };
 
     // ── Categorisation rules ────────────────────────────────────────────────

@@ -16,9 +16,9 @@ import { useRouter, Link } from "expo-router";
 import { Linking } from "react-native";
 import { useAuth } from "../context/AuthContext";
 import { useTheme, spacing, radius, typography } from "../theme";
+import { PRIVACY_URL } from "../lib/legal";
 
 // Update this once your GitHub Pages privacy policy is live
-const PRIVACY_POLICY_URL = "https://zaiakhoshaba.github.io/tend-privacy-policy/";
 
 export default function RegisterScreen() {
   const { register, loading, error, setError } = useAuth();
@@ -217,7 +217,7 @@ export default function RegisterScreen() {
               By creating an account you agree to our{" "}
               <Text
                 style={{ color: colors.accent }}
-                onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}
+                onPress={() => Linking.openURL(PRIVACY_URL)}
               >
                 Privacy Policy
               </Text>

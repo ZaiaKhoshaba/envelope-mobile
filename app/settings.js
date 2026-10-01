@@ -20,13 +20,13 @@ import { useAuth } from "../context/AuthContext";
 import { usePurchase, PLANS } from "../context/PurchaseContext";
 import { getUnlockMethod, setUnlockMethod } from "../lib/unlockPref";
 import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
+import { PRIVACY_URL, TERMS_URL, CDR_URL, SUPPORT_EMAIL } from "../lib/legal";
 
 const DEV_UNLOCK_TAPS = 5;
 
-// Public pages — update these if the URLs change.
-const PRIVACY_URL = "https://zaiakhoshaba.github.io/tend-privacy-policy/";
-const TERMS_URL   = "https://zaiakhoshaba.github.io/tend-privacy-policy/terms.html";
-const SUPPORT_EMAIL = "tend.budget.app@outlook.com";
+// Public pages and the support address now live in lib/legal.js — they were
+// written out here and in paywall.js separately, and they are about to move
+// onto a Tend domain.
 
 function timeAgo(ts) {
   if (!ts) return null;
@@ -363,6 +363,12 @@ export default function Settings() {
             label="Terms of service"
             subtitle="The agreement you're using Tend under"
             onPress={() => Linking.openURL(TERMS_URL)}
+            colors={colors}
+          />
+          <ChevronRow
+            label="CDR policy"
+            subtitle="How we handle data shared from your bank"
+            onPress={() => Linking.openURL(CDR_URL)}
             colors={colors}
             last
           />

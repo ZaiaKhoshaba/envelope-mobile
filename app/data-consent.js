@@ -13,12 +13,14 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  Linking,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../context/AuthContext";
 import { useBudget } from "../context/BudgetContext";
 import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
+import { CDR_URL, OAIC_URL, AFCA_URL, SUPPORT_EMAIL } from "../lib/legal";
 
 const BACKEND_URL =
   process.env.EXPO_PUBLIC_BANK_BACKEND_URL || "https://envelope-bank-backend.onrender.com";
@@ -67,7 +69,13 @@ export default function DataConsent() {
   const withdrawAll = useCallback(() => {
     Alert.alert(
       "Withdraw consent",
-      "Tend will stop accessing your bank data immediately and your linked banks will be disconnected. Transactions already sorted into envelopes stay in your budget.",
+      // What this said before: "Transactions already sorted into envelopes stay
+      // in your budget." They don't — withdrawing deletes every imported
+      // transaction from the device, sorted or not, which is the right
+      // behaviour for CDR data and the opposite of what people were told
+      // before they tapped a destructive button. The envelope balances do stay,
+      // because those are stored separately.
+      "Tend will stop accessing your bank data immediately and your banks will be disconnected. Every transaction imported from your bank is deleted from this device. The money you've already put into envelopes stays where it is.",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -78,7 +86,10 @@ export default function DataConsent() {
             try {
               await disconnectBank();
               await load();
-              Alert.alert("Consent withdrawn", "Your banks have been disconnected and data sharing has stopped.");
+              Alert.alert(
+                "Consent withdrawn",
+                "Your banks are disconnected, data sharing has stopped, and the transactions imported from your bank have been deleted from this device."
+              );
             } finally { setBusy(false); }
           },
         },
@@ -191,6 +202,53 @@ export default function DataConsent() {
             <Ionicons name="trash-outline" size={18} color={colors.textSecondary} />
             <Text style={[c.btnText, { color: colors.textSecondary }]}>Delete my account and data</Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[c.btn, { borderColor: colors.border, backgroundColor: colors.card }]}
+            onPress={() => Linking.openURL(CDR_URL)}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="document-text-outline" size={18} color={colors.textSecondary} />
+            <Text style={[c.btnText, { color: colors.textSecondary }]}>Read our CDR policy</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* ── If something goes wrong ──
+            The CDR Rules require a consumer to be told how to complain and
+            where to escalate if our answer doesn't satisfy them. Burying that
+            in a policy document nobody opens doesn't meet the spirit of it, so
+            it sits on the same screen as the consents themselves. */}
+        <View style={{ gap: spacing.sm }}>
+          <Text style={[c.h, { color: colors.textPrimary }]}>If something goes wrong</Text>
+          <View style={[c.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={[c.item, { borderBottomWidth: 1, borderBottomColor: colors.border }]}>
+              <Ionicons name="mail-outline" size={20} color={colors.accent} style={{ marginTop: 2 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={[c.itemTitle, { color: colors.textPrimary }]}>Tell us first</Text>
+                <Text style={[c.itemBody, { color: colors.textSecondary }]}>
+                  Email {SUPPORT_EMAIL}. We'll acknowledge within 2 business days and give you an answer within 30 days.
+                </Text>
+              </View>
+            </View>
+            <TouchableOpacity style={[c.item, { borderBottomWidth: 1, borderBottomColor: colors.border }]} onPress={() => Linking.openURL(OAIC_URL)} activeOpacity={0.7}>
+              <Ionicons name="open-outline" size={20} color={colors.accent} style={{ marginTop: 2 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={[c.itemTitle, { color: colors.textPrimary }]}>Office of the Australian Information Commissioner</Text>
+                <Text style={[c.itemBody, { color: colors.textSecondary }]}>
+                  If our answer doesn't satisfy you. oaic.gov.au or 1300 363 992.
+                </Text>
+              </View>
+            </TouchableOpacity>
+            <TouchableOpacity style={c.item} onPress={() => Linking.openURL(AFCA_URL)} activeOpacity={0.7}>
+              <Ionicons name="open-outline" size={20} color={colors.accent} style={{ marginTop: 2 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={[c.itemTitle, { color: colors.textPrimary }]}>Australian Financial Complaints Authority</Text>
+                <Text style={[c.itemBody, { color: colors.textSecondary }]}>
+                  Free, independent dispute resolution. afca.org.au.
+                </Text>
+              </View>
+            </TouchableOpacity>
+          </View>
         </View>
 
       </ScrollView>

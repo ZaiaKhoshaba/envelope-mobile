@@ -20,9 +20,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { usePurchase, PLANS } from "../context/PurchaseContext";
 import * as Store from "../lib/purchases";
 import { useTheme, makeStyles, spacing, radius, typography } from "../theme";
+import { PRIVACY_URL, TERMS_URL } from "../lib/legal";
 
-const PRIVACY_URL = "https://zaiakhoshaba.github.io/tend-privacy-policy/";
-const TERMS_URL   = "https://zaiakhoshaba.github.io/tend-privacy-policy/terms.html";
 
 const BENEFITS = [
   { icon: "sync",              text: "Your real bank balance, always up to date" },
