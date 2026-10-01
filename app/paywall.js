@@ -74,6 +74,34 @@ export default function Paywall() {
     return pkg?.product?.priceString || PLANS[planKey].price;
   }, [offering]);
 
+  // How much the annual plan saves, worked out from the prices the store is
+  // actually charging rather than from the fallback figures in PRICING.
+  //
+  // The badge used to read straight off PRICING, so the moment a price changed
+  // in Play or App Store Connect and nobody remembered to edit the app, it went
+  // on cheerfully advertising the old discount next to the new prices. Deriving
+  // it from the same packages that render the prices means the two can never
+  // disagree. When the store hasn't answered, PLANS supplies the fallback.
+  const savingTag = useCallback((planKey) => {
+    if (planKey !== "annual") return PLANS[planKey].savingTag;
+
+    const pkgs = offering?.availablePackages || [];
+    const amountOf = (wanted, id) => {
+      const pkg =
+        pkgs.find((p) => p?.product?.identifier === id) ||
+        pkgs.find((p) => String(p?.packageType || "").toUpperCase() === wanted);
+      const n = Number(pkg?.product?.price);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    };
+
+    const monthly = amountOf("MONTHLY", PLANS.monthly.id);
+    const annual  = amountOf("ANNUAL",  PLANS.annual.id);
+    if (monthly == null || annual == null) return PLANS.annual.savingTag;
+
+    const pct = Math.round((1 - annual / (monthly * 12)) * 100);
+    return pct > 0 ? `Save ${pct}%` : null;
+  }, [offering]);
+
   const onSubscribe = useCallback(async () => {
     setBusy(true);
     try {
@@ -156,9 +184,9 @@ export default function Paywall() {
                 <View style={{ flex: 1 }}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
                     <Text style={[w.planLabel, { color: colors.textPrimary }]}>{PLANS[key].label}</Text>
-                    {PLANS[key].savingTag && (
+                    {savingTag(key) && (
                       <View style={[w.tag, { backgroundColor: colors.accentSoft }]}>
-                        <Text style={[w.tagText, { color: colors.accent }]}>{PLANS[key].savingTag}</Text>
+                        <Text style={[w.tagText, { color: colors.accent }]}>{savingTag(key)}</Text>
                       </View>
                     )}
                   </View>

@@ -44,8 +44,8 @@ export const TRIAL_DAYS = 30;
 // stores have them, so the price must not be baked into the name.
 export const PRICING = {
   currency: "$",
-  monthly: { amount: 4.99,  productId: "tend_premium_monthly" },
-  annual:  { amount: 29.99, productId: "tend_premium_annual" },
+  monthly: { amount: 6.99,  productId: "tend_premium_monthly" },
+  annual:  { amount: 69.99, productId: "tend_premium_annual" },
 };
 
 /* Accounts allowed to use the internal testing tools. Add your own logins here.
