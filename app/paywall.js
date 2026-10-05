@@ -24,10 +24,10 @@ import { PRIVACY_URL, TERMS_URL } from "../lib/legal";
 
 
 const BENEFITS = [
-  { icon: "sync",              text: "Your real bank balance, always up to date" },
+  { icon: "sync",              text: "Your bank balance, brought into Tend" },
   { icon: "receipt-outline",   text: "Transactions import automatically — no typing" },
   { icon: "flash-outline",     text: "One tap to draw a spend from the right envelope" },
-  { icon: "notifications-outline", text: "Know the moment money moves" },
+  { icon: "notifications-outline", text: "A notification when new transactions arrive" },
 ];
 
 export default function Paywall() {

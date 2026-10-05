@@ -70,7 +70,7 @@ const SLIDES = [
     key: "allocation",
     emoji: "⚡",
     title: "Payday, handled automatically",
-    body: "When you log income, Tend works out exactly how much of each pay belongs to each fixed envelope — based on its share of your total commitments.\n\nNo manual maths. The moment money arrives, it's already spoken for.",
+    body: "When you log income, Tend works out exactly how much of each pay belongs to each fixed envelope — based on its share of your total commitments.\n\nNo manual maths. Once it's logged, it's already spoken for.",
     cta: "Smart!",
   },
   {
