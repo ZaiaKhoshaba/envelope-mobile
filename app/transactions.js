@@ -422,7 +422,7 @@ export default function TransactionsScreen() {
           activeOpacity={outstandingCount > 1 ? 0.7 : 1}
         >
           <Text style={[banner.text, { color: colors.warning, flex: 1 }]}>
-            ⚠️  {outstandingCount} spend{outstandingCount > 1 ? "s" : ""} need allocating
+            ⚠️  {outstandingCount} spend{outstandingCount > 1 ? "s" : ""} {outstandingCount > 1 ? "need" : "needs"} allocating
           </Text>
           {outstandingCount > 1 && (
             <Text style={[banner.text, { color: colors.warning, fontWeight: typography.bold, textDecorationLine: "underline" }]}>
